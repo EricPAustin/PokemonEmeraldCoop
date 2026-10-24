@@ -9,8 +9,10 @@ the link cable, and a frame only runs once both players' buttons for it have arr
 then simulate exactly the same frame, so they stay identical: same random numbers, same NPCs, same
 battles, same saves.
 
-- **Player 1** (first window) is the main character. P1 opens doors, meets trainers that spot
-  you and walks into wild Pokémon.
+- **Player 1** (first window) is the main character. P1 opens doors and walks into wild Pokémon.
+- **Trainers spot either player.** A trainer who sees Player 2 (walking or surfing) gets the "!",
+  walks up to Player 2 and Player 2 turns to face them; Player 1 stays where they are. Then the
+  normal co-op double battle starts.
 - **Player 2** (second window) walks their own character (the rival sprite of the other gender).
   P2's window follows P2. P2 comes along automatically when P1 uses doors, warps, Fly and so on.
 - **Either player can use doors and warps** (doors, exit mats, stairs, ladders, cave entrances).
@@ -121,7 +123,7 @@ copy `.sav` over `.sa2` once; after that they stay identical.
 ## Not available during co-op
 - The Cable Club, Wireless Club, Union Room, record mixing, link contests and link battles
   (the attendants just say "please visit again"). The link cable is busy with co-op.
-- Player 2 can't use Waterfall or Dive (Player 1 does those; P2 follows). Trainers only spot Player 1.
+- Player 2 can't use Waterfall or Dive (Player 1 does those; P2 follows).
 - Player 2 can only use doors on the map Player 1 is on (not doors just across a route border).
 - Fast-forwarding one window doesn't help: each game waits for the other.
 
@@ -148,6 +150,16 @@ Two linked mGBA cores, scripted inputs, comparing both games' state every 32 fra
 - Tested: Player 1 with a save and Player 2 with none both pick NEW GAME. The introduction, naming,
   the truck, arriving in Littleroot and walking into the house stay in sync (about 15,000 frames).
   Player 2 appears next to Player 1 once the cutscenes let go.
+
+## Trainers spotting Player 2: testing
+- Route 103 (surf test save): Player 2 surfed into the sight of Swimmers Isabelle and Pete while
+  Player 1 waited 6 tiles away on the water. Both walked up to Player 2 (Player 2 turned to each),
+  "SWIMMER ISABELLE and SWIMMER PETE" battle, won, both marked as beaten on both GBAs, no re-trigger.
+- Player 2 stepped into Camper Miguel's sight on land while Player 1 stood 5 tiles away: Miguel took
+  one step to Player 2, battle with his mirrored partner, won. Player 1 never moved or turned.
+- Same spot with Player 1 walking in instead: works as before.
+- No desync in any run (game's own state hashes plus comparing every object's position on both GBAs).
+- If both players are in sight of the same trainer, the one the trainer sees first is Player 1.
 
 ## Wild doubles: testing
 - Route 103: Player 2 found Pokémon in the grass and while surfing (water background, two Tentacool /
