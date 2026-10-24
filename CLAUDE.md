@@ -25,8 +25,8 @@ For how the co-op works in detail (controls, saving, error messages, testing don
 
 ## Roadmap
 - **Phase 0 – Setup:** private GitHub repo ✅, clean build running in mGBA, this file in place ✅.
-- **Phase 1 – Two players exist:** ✅ P2 character, P2 starter, split teams, shared save, NEW GAME/CONTINUE in co-op, P2 can use doors/warps. P2 picks their own gender and name in Birch's intro and can nickname their starter in Birch's lab (needs playtest).
-- **Phase 2 – Co-op battles:** ✅ multi battles, each player picks their own Pokémon's moves ("P1:/P2: What will..."). P2's trainer back sprite slides in and throws P2's Pokémon (needs playtest). To do: wild double battles, edge cases below.
+- **Phase 1 – Two players exist:** ✅ P2 character, P2 starter, split teams, shared save, NEW GAME/CONTINUE in co-op, P2 can use doors/warps. P2 picks their own gender and name in Birch's intro and can nickname their starter in Birch's lab.
+- **Phase 2 – Co-op battles:** ✅ multi battles, each player picks their own Pokémon's moves ("NAME: What will..."). P2's trainer back sprite slides in and throws P2's Pokémon. To do: wild double battles, edge cases below.
 - **Phase 3 – Doubled trainers:** ✅ generated "mirrored partner" for every trainer (same class, different species, same levels, ≤3 Pokémon per side). To do: hand-tune notable fights (gyms, Elite Four, Champion).
 - **Phase 4 – Content:** casino (can reuse Mauville Game Corner code), new/changed maps, story additions.
 
@@ -83,10 +83,10 @@ Then each time:
 - Co-op is playable from NEW GAME through at least Route 102/103 per the testing notes.
 - 2026-10-23: reviewed repo against the original plan, rewrote this file to match what's built, removed 20 leftover `.rej` files (all hunks verified as already applied or superseded), added `.gitignore`.
 - 2026-10-23: clean build on Declan's PC (WSL Ubuntu, agbcc), `pokeemerald.gba` produced.
-- 2026-10-23: Player 2 update (builds, not playtested yet): P2 gender + name in Birch's intro, P2 nickname for their starter in the lab, P2's name on the starter screen and CO-OP TEAMS PC, P2 overworld sprite follows P2's gender, P2 trainer back sprite in co-op battles (each player throws their own Pokémon, using the multi-battle send-out path).
+- 2026-10-23: Player 2 update (playtested OK): P2 gender + name in Birch's intro, P2 nickname for their starter in the lab, P2's name on the starter screen and CO-OP TEAMS PC, P2 overworld sprite follows P2's gender, P2 trainer back sprite in co-op battles (each player throws their own Pokémon, using the multi-battle send-out path).
 - 2026-10-23: first playtest of the Player 2 update by Declan + Eric. Fixes from it: P1 always picks the starter first (even if P2 opened the bag) and the starter screen names whose turn it is; battle prompts use player names instead of P1/P2; Pokémon Center nurse no longer prints a garbage "player is waiting in the Union Room" message (co-op skipped clearing that name).
+- 2026-10-23: re-tested those fixes: all work.
 - Next:
-  1. Re-test the fixes above (starter bag opened by P2, battle prompts, healing at a Pokémon Center).
-  2. Test linking across two PCs on the home network.
-  3. Wild double battles.
-  5. Full playthrough test: gyms, Elite Four, Champion.
+  1. Test linking across two PCs on the home network.
+  2. Wild double battles.
+  3. Full playthrough test: gyms, Elite Four, Champion.
