@@ -1,4 +1,5 @@
 #include "global.h"
+#include "coop_link.h"
 #include "decompress.h"
 #include "event_object_movement.h"
 #include "field_camera.h"
@@ -3070,6 +3071,8 @@ static void SurfFieldEffect_End(struct Task *task)
         UnlockPlayerFieldControls();
         FieldEffectActiveListRemove(FLDEFF_USE_SURF);
         DestroyTask(FindTaskIdByFunc(Task_SurfFieldEffect));
+        if (COOP_LINKED)
+            CoopP2_OnPlayer1StartedSurfing(); // Linked co-op: Player 2 surfs alongside
     }
 }
 
