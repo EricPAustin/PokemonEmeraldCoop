@@ -1,0 +1,4320 @@
+diff --git a/data/scripts/pc.inc b/data/scripts/pc.inc
+index f2b8f47ff..18e3c1876 100644
+--- a/data/scripts/pc.inc
++++ b/data/scripts/pc.inc
+@@ -18,11 +18,41 @@ EventScript_AccessPC::
+ 	switch VAR_RESULT
+ 	case 0, EventScript_AccessPokemonStorage
+ 	case 1, EventScript_AccessPlayersPC
+-	case 2, EventScript_AccessHallOfFame
+-	case 3, EventScript_TurnOffPC
++	case 2, EventScript_AccessCoopTeams
++	case 3, EventScript_AccessHallOfFame
++	case 4, EventScript_TurnOffPC
+ 	case MULTI_B_PRESSED, EventScript_TurnOffPC
+ 	end
+ 
++@ Co-op: move Pokémon between Player 1's and Player 2's teams.
++EventScript_AccessCoopTeams::
++	playse SE_PC_LOGIN
++	msgbox CoopText_TeamsIntro, MSGBOX_DEFAULT
++EventScript_CoopTeamsChoose::
++	special ChoosePartyMon
++	goto_if_eq VAR_0x8004, PARTY_NOTHING_CHOSEN, EventScript_PCMainMenu
++	specialvar VAR_RESULT, Coop_TryMoveMonToOtherTeam
++	goto_if_eq VAR_RESULT, 1, EventScript_CoopTeamsSwap
++	msgbox CoopText_MonJoinedTeam, MSGBOX_DEFAULT
++	goto EventScript_CoopTeamsChoose
++	end
++
++EventScript_CoopTeamsSwap::
++	msgbox CoopText_TeamFullChooseSwap, MSGBOX_DEFAULT
++	copyvar VAR_0x8005, VAR_0x8004
++	special ChoosePartyMon
++	goto_if_eq VAR_0x8004, PARTY_NOTHING_CHOSEN, EventScript_CoopTeamsChoose
++	specialvar VAR_RESULT, Coop_TrySwapTeamMons
++	goto_if_eq VAR_RESULT, 1, EventScript_CoopTeamsSameTeam
++	msgbox CoopText_MonsSwitchedTeams, MSGBOX_DEFAULT
++	goto EventScript_CoopTeamsChoose
++	end
++
++EventScript_CoopTeamsSameTeam::
++	msgbox CoopText_ChooseFromOtherTeam, MSGBOX_DEFAULT
++	goto EventScript_CoopTeamsChoose
++	end
++
+ EventScript_AccessPlayersPC::
+ 	playse SE_PC_LOGIN
+ 	msgbox gText_AccessedPlayersPC, MSGBOX_DEFAULT
+diff --git a/data/specials.inc b/data/specials.inc
+index 34f27bfcf..d7e15e482 100644
+--- a/data/specials.inc
++++ b/data/specials.inc
+@@ -540,3 +540,5 @@ gSpecials::
+ 	def_special RemoveRecordsWindow
+ 	def_special CloseDeptStoreElevatorWindow
+ 	def_special TrySetBattleTowerLinkType
++	def_special Coop_TryMoveMonToOtherTeam
++	def_special Coop_TrySwapTeamMons
+diff --git a/data/text/pc.inc b/data/text/pc.inc
+index 1c7bf5a32..8e63a44a0 100644
+--- a/data/text/pc.inc
++++ b/data/text/pc.inc
+@@ -15,3 +15,23 @@ gText_AccessedPlayersPC::
+ 
+ gText_AccessedLanettesPC::
+ 	.string "Accessed LANETTE's PC.$"
++
++CoopText_TeamsIntro::
++	.string "CO-OP TEAMS opened.\p"
++	.string "Choose a POKéMON to move it to\n"
++	.string "the other player's team.$"
++
++CoopText_MonJoinedTeam::
++	.string "{STR_VAR_1} joined {STR_VAR_2}'s team!$"
++
++CoopText_TeamFullChooseSwap::
++	.string "{STR_VAR_2}'s team is full.\p"
++	.string "Choose one of {STR_VAR_2}'s POKéMON to\n"
++	.string "trade places with {STR_VAR_1}.$"
++
++CoopText_MonsSwitchedTeams::
++	.string "{STR_VAR_1} and {STR_VAR_3}\n"
++	.string "switched teams!$"
++
++CoopText_ChooseFromOtherTeam::
++	.string "Those two are on the same team.$"
+diff --git a/include/coop.h b/include/coop.h
+new file mode 100644
+index 000000000..511daa49b
+--- /dev/null
++++ b/include/coop.h
+@@ -0,0 +1,57 @@
++#ifndef GUARD_COOP_H
++#define GUARD_COOP_H
++
++// Two-player co-op support.
++//
++// The party (6 slots) is shared between two players. Every Pokémon carries an
++// owner bit (see struct BoxPokemon::coopOwner), and each player may have at most
++// COOP_TEAM_SIZE Pokémon in the party.
++//
++// In battle, when both players have a Pokémon that can fight, the battle is
++// turned into a double battle: Player 1 controls the left Pokémon and Player 2
++// controls the right one. Each battler can only switch to Pokémon owned by its
++// player. If the opponent only has one Pokémon (wild battles, trainers with a
++// single Pokémon), the opponent's right slot starts the battle empty.
++
++// Set to FALSE to build the vanilla single-player game.
++#define COOP_ENABLED TRUE
++
++#define COOP_PLAYER_1   0
++#define COOP_PLAYER_2   1
++#define COOP_NUM_PLAYERS 2
++#define COOP_TEAM_SIZE  (PARTY_SIZE / COOP_NUM_PLAYERS)
++
++extern bool8 gCoopBattle;
++extern bool8 gCoopChoosingPlayer2Starter;
++extern const u8 gText_CoopNotYourMon[];
++
++// Ownership
++u8 GetMonCoopOwner(struct Pokemon *mon);
++void SetMonCoopOwner(struct Pokemon *mon, u8 owner);
++u8 GetBoxMonCoopOwner(struct BoxPokemon *boxMon);
++void SetBoxMonCoopOwner(struct BoxPokemon *boxMon, u8 owner);
++u8 Coop_CountTeam(u8 owner);
++u8 Coop_GetOwnerForNewMon(void);
++void Coop_NormalizeParty(void);
++bool8 Coop_BothTeamsInParty(void);
++void Coop_SwapOwners(struct Pokemon *mon1, struct Pokemon *mon2);
++
++// Battle
++void Coop_ResetBattle(void);
++bool8 Coop_IsMirrorBattle(void);
++void Coop_InitBattle(void);
++bool8 IsCoopBattle(void);
++u8 Coop_GetBattlerOwner(u8 battler);
++bool8 Coop_IsMonUsableByBattler(u8 battler, struct Pokemon *mon);
++bool8 Coop_SetBattlePartyIds(void);
++void Coop_MarkAbsentBattlersAtStart(void);
++bool8 Coop_IsBattlerAbsent(u8 battler);
++bool8 Coop_IsPartnerAbsent(u8 battler);
++u8 Coop_GetOpposingBattler(u8 battler);
++const u8 *Coop_GetWhatWillPkmnDoText(u8 battler);
++
++// PC
++u16 Coop_TryMoveMonToOtherTeam(void);
++u16 Coop_TrySwapTeamMons(void);
++
++#endif // GUARD_COOP_H
+diff --git a/include/coop_link.h b/include/coop_link.h
+new file mode 100644
+index 000000000..2990defa2
+--- /dev/null
++++ b/include/coop_link.h
+@@ -0,0 +1,80 @@
++#ifndef GUARD_COOP_LINK_H
++#define GUARD_COOP_LINK_H
++
++#include "siirtc.h"
++
++// Linked co-op: two GBAs (e.g. two mGBA multiplayer windows) play the same game.
++//
++// Both GBAs run the normal single-player game in lockstep. Every frame they swap
++// both players' buttons over the link cable, then simulate that frame with
++// exactly the same input on both sides, so the two games stay identical.
++// Player 1 (first window) is the normal player character. Player 2 walks a
++// second character, and Player 2's window draws the map around Player 2.
++//
++// The game is always played linked: choosing CONTINUE (both games must have
++// the same save file) or NEW GAME on the main menu of both GBAs links them up.
++//
++// Set to FALSE to remove the feature entirely.
++#define COOP_LINKED TRUE
++
++// Debugging aid: when TRUE, a desync doesn't show an error. Instead both games
++// stop 64 frames after it and keep per-frame state hashes (gCoopDebugHistory)
++// that can be compared to find what diverged first.
++#define COOP_DEBUG_DESYNC FALSE
++
++// Max distance (in tiles) between the two players.
++#define COOP_TETHER_X 7
++#define COOP_TETHER_Y 6
++
++#define LOCALID_COOP_PLAYER2 250
++
++extern bool8 gCoopLinkActive;   // Lockstep session running
++extern u8 gCoopLocalPlayer;     // Which player this GBA belongs to (COOP_PLAYER_1/2)
++extern u8 gCoopInputOwner;      // Whose buttons drive menus, scripts and battle prompts
++extern u32 gCoopTick;           // Frames simulated since the session started
++extern u32 gCoopDesyncTick;     // Non-zero once a desync was detected
++
++// Main menu
++#define COOP_START_CONTINUE 0
++#define COOP_START_NEW_GAME 1
++void CoopLink_StartFromMainMenu(u8 startMode);
++void CoopLink_StartNewGameIntro(void); // main_menu.c
++
++// Main loop / interrupts
++bool8 CoopLink_BeginTick(void);
++void CoopLink_EndTick(void);
++bool8 CoopLink_TickRanThisFrame(void);
++bool8 CoopLink_ShouldStepSound(void);
++
++// Cable club features are off during linked co-op
++void CoopLink_RefuseLinkup(void);
++
++// Shared clock
++bool8 CoopLink_GetRtcInfo(struct SiiRtcInfo *rtc);
++
++// Input ownership
++void CoopLink_SetInputOwnerForBattler(u8 battler);
++void CoopLink_EndBattlePrompt(void);
++u16 CoopLink_GetPlayerKeys(u8 player);
++u16 CoopLink_GetPlayerNewKeys(u8 player);
++
++// Player 2's character (coop_player2.c)
++void CoopP2_Update(void);
++void CoopP2_OnMapLoad(void);
++void CoopP2_EnsureSpawned(void);
++struct ObjectEvent *CoopP2_GetObject(void);
++bool8 CoopP2_IsWalking(void);
++bool8 CoopP2_IsPlayer1MoveAllowed(s16 x, s16 y);
++void CoopP2_GetViewBounds(s16 *left, s16 *right, s16 *top, s16 *bottom);
++bool8 CoopP2_IsObjectP2(const struct ObjectEvent *objectEvent);
++u8 CoopP2_GetInteractingFacing(void);
++bool8 Coop_TryStartInteractionAt(s16 x, s16 y, u8 elevation, u8 direction); // field_control_avatar.c
++bool8 Coop_TrySetupDoorWarpAt(s16 x, s16 y, u8 elevation, u8 direction);
++bool8 Coop_TryStepWarpAt(s16 x, s16 y, u8 elevation, u8 direction, bool8 arrow);
++bool8 Coop_IsWarpTile(u8 metatileBehavior);
++
++// Player 2's camera (field_camera.c)
++bool8 CoopView_IsLocalViewOffset(void);
++void CoopView_Update(void);
++
++#endif // GUARD_COOP_LINK_H
+diff --git a/include/dma3.h b/include/dma3.h
+index 8eff34f55..e0298ffbf 100644
+--- a/include/dma3.h
++++ b/include/dma3.h
+@@ -48,6 +48,7 @@
+ 
+ void ClearDma3Requests(void);
+ void ProcessDma3Requests(void);
++void FlushDma3Requests(void);
+ s16 RequestDma3Copy(const void *src, void *dest, u16 size, u8 mode);
+ s16 RequestDma3Fill(s32 value, void *dest, u16 size, u8 mode);
+ s16 CheckForSpaceForDma3Request(s16 index);
+diff --git a/include/event_object_movement.h b/include/event_object_movement.h
+index 9a85e4436..a0aa9de34 100644
+--- a/include/event_object_movement.h
++++ b/include/event_object_movement.h
+@@ -124,6 +124,7 @@ void SetSpritePosToOffsetMapCoords(s16 *x, s16 *y, s16 dx, s16 dy);
+ void ObjectEventClearHeldMovement(struct ObjectEvent *objectEvent);
+ void ObjectEventClearHeldMovementIfActive(struct ObjectEvent *objectEvent);
+ void TrySpawnObjectEvents(s16 cameraX, s16 cameraY);
++void RemoveObjectEventsOutsideView(void);
+ u8 CreateObjectGraphicsSprite(u16 graphicsId, void (*callback)(struct Sprite *), s16 x, s16 y, u8 subpriority);
+ u8 TrySpawnObjectEvent(u8 localId, u8 mapNum, u8 mapGroup);
+ u8 SpawnSpecialObjectEventParameterized(u8 graphicsId, u8 movementBehavior, u8 localId, s16 x, s16 y, u8 elevation);
+diff --git a/include/fieldmap.h b/include/fieldmap.h
+index f6d9aeacc..21a00dcf2 100644
+--- a/include/fieldmap.h
++++ b/include/fieldmap.h
+@@ -29,6 +29,7 @@ void MapGridSetMetatileIdAt(s32 x, s32 y, u16 metatile);
+ void MapGridSetMetatileEntryAt(s32 x, s32 y, u16 metatile);
+ void GetCameraCoords(u16 *x, u16 *y);
+ u8 MapGridGetCollisionAt(s32 x, s32 y);
++u32 MapGridGetMetatileIdAtForDrawing(s32 x, s32 y);
+ s32 GetMapBorderIdAt(s32 x, s32 y);
+ bool32 CanCameraMoveInDirection(s32 direction);
+ u16 GetMetatileAttributesById(u16 metatile);
+diff --git a/include/link.h b/include/link.h
+index 1fc9c43a0..d61ac2639 100644
+--- a/include/link.h
++++ b/include/link.h
+@@ -293,6 +293,10 @@ bool8 HandleLinkConnection(void);
+ void SetLinkDebugValues(u32 seed, u32 flags);
+ void SetBerryBlenderLinkCallback(void);
+ void SetSuppressLinkErrorMessage(bool8 flag);
++void CoopLink_RestoreLinkOpen(void);
++bool8 CoopLink_IsLinkOpen(void);
++bool8 CoopLink_DequeueRecvPacket(u16 (*recvCmds)[CMD_LENGTH]);
++void CoopLink_SendPacket(u16 *sendCmd);
+ void ConvertLinkPlayerName(struct LinkPlayer *player);
+ void ClearSavedLinkPlayers(void);
+ void SetLinkErrorBuffer(u32 status, u8 lastSendQueueCount, u8 lastRecvQueueCount, bool8 disconnected);
+diff --git a/include/pokemon.h b/include/pokemon.h
+index 1794ab37c..ab5a655c1 100644
+--- a/include/pokemon.h
++++ b/include/pokemon.h
+@@ -203,7 +203,8 @@ struct BoxPokemon
+     u8 hasSpecies:1;
+     u8 isEgg:1;
+     u8 blockBoxRS:1; // Unused, but Pokémon Box Ruby & Sapphire will refuse to deposit a Pokémon with this flag set
+-    u8 unused:4;
++    u8 coopOwner:1; // Co-op: which player owns this Pokémon (see coop.h)
++    u8 unused:3;
+     u8 otName[PLAYER_NAME_LENGTH];
+     u8 markings;
+     u16 checksum;
+@@ -464,6 +465,7 @@ u8 GetSecretBaseTrainerClass(void);
+ bool8 IsPlayerPartyAndPokemonStorageFull(void);
+ bool8 IsPokemonStorageFull(void);
+ void GetSpeciesName(u8 *name, u16 species);
++void GetSpeciesNamePadded(u8 *name, u16 species);
+ u8 CalculatePPWithBonus(u16 move, u8 ppBonuses, u8 moveIndex);
+ void RemoveMonPPBonus(struct Pokemon *mon, u8 moveIndex);
+ void RemoveBattleMonPPBonus(struct BattlePokemon *mon, u8 moveIndex);
+diff --git a/ld_script.ld b/ld_script.ld
+index 2ec9123ac..177e21fa6 100644
+--- a/ld_script.ld
++++ b/ld_script.ld
+@@ -91,6 +91,9 @@ SECTIONS {
+         src/battle_util.o(.text);
+         src/battle_script_commands.o(.text);
+         src/battle_util2.o(.text);
++        src/coop.o(.text);
++        src/coop_link.o(.text);
++        src/coop_player2.o(.text);
+         src/battle_controller_player.o(.text);
+         src/battle_gfx_sfx_util.o(.text);
+         src/battle_controller_opponent.o(.text);
+@@ -478,6 +481,9 @@ SECTIONS {
+         src/battle_bg.o(.rodata);
+         src/battle_main.o(.rodata);
+         src/battle_util.o(.rodata);
++        src/coop.o(.rodata);
++        src/coop_link.o(.rodata);
++        src/coop_player2.o(.rodata);
+         src/battle_script_commands.o(.rodata);
+         src/battle_controller_player.o(.rodata);
+         src/battle_anim_smokescreen.o(.rodata);
+diff --git a/src/battle_controller_opponent.c b/src/battle_controller_opponent.c
+index 12d0f8a93..cc8128555 100644
+--- a/src/battle_controller_opponent.c
++++ b/src/battle_controller_opponent.c
+@@ -1,4 +1,5 @@
+ #include "global.h"
++#include "coop.h"
+ #include "battle.h"
+ #include "battle_ai_script_commands.h"
+ #include "battle_anim.h"
+@@ -225,7 +226,8 @@ static void Intro_WaitForShinyAnimAndHealthbox(void)
+     bool8 healthboxAnimDone = FALSE;
+     bool8 twoMons;
+ 
+-    if (!IsDoubleBattle() || ((IsDoubleBattle() && (gBattleTypeFlags & BATTLE_TYPE_MULTI)) || (gBattleTypeFlags & BATTLE_TYPE_TWO_OPPONENTS)))
++    if (!IsDoubleBattle() || ((IsDoubleBattle() && (gBattleTypeFlags & BATTLE_TYPE_MULTI)) || (gBattleTypeFlags & BATTLE_TYPE_TWO_OPPONENTS))
++     || Coop_IsPartnerAbsent(gActiveBattler))
+     {
+         if (gSprites[gHealthboxSpriteIds[gActiveBattler]].callback == SpriteCallbackDummy)
+             healthboxAnimDone = TRUE;
+@@ -302,6 +304,7 @@ static void Intro_TryShinyAnimShowHealthbox(void)
+     if (!(gBattleTypeFlags & BATTLE_TYPE_TWO_OPPONENTS)
+      && !(gBattleTypeFlags & BATTLE_TYPE_MULTI)
+      && IsDoubleBattle()
++     && !Coop_IsPartnerAbsent(gActiveBattler)
+      && !gBattleSpritesDataPtr->healthBoxesData[BATTLE_PARTNER(gActiveBattler)].triedShinyMonAnim
+      && !gBattleSpritesDataPtr->healthBoxesData[BATTLE_PARTNER(gActiveBattler)].ballAnimActive
+      && !gBattleSpritesDataPtr->healthBoxesData[BATTLE_PARTNER(gActiveBattler)].finishedShinyMonAnim)
+@@ -311,7 +314,7 @@ static void Intro_TryShinyAnimShowHealthbox(void)
+     {
+         if (!gBattleSpritesDataPtr->healthBoxesData[gActiveBattler].healthboxSlideInStarted)
+         {
+-            if (IsDoubleBattle() && !(gBattleTypeFlags & BATTLE_TYPE_MULTI))
++            if (IsDoubleBattle() && !(gBattleTypeFlags & BATTLE_TYPE_MULTI) && !Coop_IsPartnerAbsent(gActiveBattler))
+             {
+                 UpdateHealthboxAttribute(gHealthboxSpriteIds[BATTLE_PARTNER(gActiveBattler)], &gEnemyParty[gBattlerPartyIndexes[BATTLE_PARTNER(gActiveBattler)]], HEALTHBOX_ALL);
+                 StartHealthboxSlideIn(BATTLE_PARTNER(gActiveBattler));
+@@ -345,7 +348,7 @@ static void Intro_TryShinyAnimShowHealthbox(void)
+         bgmRestored = TRUE;
+     }
+ 
+-    if (!IsDoubleBattle() || (IsDoubleBattle() && (gBattleTypeFlags & BATTLE_TYPE_MULTI)))
++    if (!IsDoubleBattle() || (IsDoubleBattle() && (gBattleTypeFlags & BATTLE_TYPE_MULTI)) || Coop_IsPartnerAbsent(gActiveBattler))
+     {
+         if (gSprites[gBattleControllerData[gActiveBattler]].callback == SpriteCallbackDummy
+             && gSprites[gBattlerSpriteIds[gActiveBattler]].callback == SpriteCallbackDummy)
+@@ -366,7 +369,7 @@ static void Intro_TryShinyAnimShowHealthbox(void)
+ 
+     if (bgmRestored && battlerAnimsDone)
+     {
+-        if (IsDoubleBattle() && !(gBattleTypeFlags & BATTLE_TYPE_MULTI))
++        if (IsDoubleBattle() && !(gBattleTypeFlags & BATTLE_TYPE_MULTI) && !Coop_IsPartnerAbsent(gActiveBattler))
+         {
+             DestroySprite(&gSprites[gBattleControllerData[BATTLE_PARTNER(gActiveBattler)]]);
+             SetBattlerShadowSpriteCallback(BATTLE_PARTNER(gActiveBattler), GetMonData(&gEnemyParty[gBattlerPartyIndexes[BATTLE_PARTNER(gActiveBattler)]], MON_DATA_SPECIES));
+@@ -1899,7 +1902,7 @@ static void Task_StartSendOutAnim(u8 taskId)
+     u8 savedActiveBank = gActiveBattler;
+ 
+     gActiveBattler = gTasks[taskId].data[0];
+-    if (!IsDoubleBattle() || (gBattleTypeFlags & BATTLE_TYPE_MULTI))
++    if (!IsDoubleBattle() || (gBattleTypeFlags & BATTLE_TYPE_MULTI) || Coop_IsPartnerAbsent(gActiveBattler))
+     {
+         gBattleBufferA[gActiveBattler][1] = gBattlerPartyIndexes[gActiveBattler];
+         StartSendOutAnim(gActiveBattler, FALSE);
+diff --git a/src/battle_controller_player.c b/src/battle_controller_player.c
+index 45bf1a17e..bd07fdbd7 100644
+--- a/src/battle_controller_player.c
++++ b/src/battle_controller_player.c
+@@ -1,4 +1,6 @@
+ #include "global.h"
++#include "coop_link.h"
++#include "coop.h"
+ #include "battle.h"
+ #include "battle_anim.h"
+ #include "battle_arena.h"
+@@ -199,6 +201,7 @@ void SetControllerToPlayer(void)
+ 
+ static void PlayerBufferExecCompleted(void)
+ {
++    CoopLink_EndBattlePrompt(); // Linked co-op: both players can advance battle text again
+     gBattlerControllerFuncs[gActiveBattler] = PlayerBufferRunCommand;
+     if (gBattleTypeFlags & BATTLE_TYPE_LINK)
+     {
+@@ -2576,6 +2579,8 @@ static void PlayerHandleChooseAction(void)
+ {
+     s32 i;
+ 
++    CoopLink_SetInputOwnerForBattler(gActiveBattler); // Linked co-op: this battler's player answers
++
+     gBattlerControllerFuncs[gActiveBattler] = HandleChooseActionAfterDma3;
+     BattleTv_ClearExplosionFaintCause();
+     BattlePutTextOnWindow(gText_BattleMenu, B_WIN_ACTION_MENU);
+@@ -2584,12 +2589,13 @@ static void PlayerHandleChooseAction(void)
+         ActionSelectionDestroyCursorAt(i);
+ 
+     ActionSelectionCreateCursorAt(gActionSelectionCursor[gActiveBattler], 0);
+-    BattleStringExpandPlaceholdersToDisplayedString(gText_WhatWillPkmnDo);
++    BattleStringExpandPlaceholdersToDisplayedString(Coop_GetWhatWillPkmnDoText(gActiveBattler));
+     BattlePutTextOnWindow(gDisplayedStringBattle, B_WIN_ACTION_PROMPT);
+ }
+ 
+ static void PlayerHandleYesNoBox(void)
+ {
++    CoopLink_SetInputOwnerForBattler(gActiveBattler); // Linked co-op: this battler's player answers
+     if (GetBattlerSide(gActiveBattler) == B_SIDE_PLAYER)
+     {
+         HandleBattleWindow(YESNOBOX_X_Y, 0);
+@@ -2628,6 +2634,7 @@ static void PlayerChooseMoveInBattlePalace(void)
+ 
+ static void PlayerHandleChooseMove(void)
+ {
++    CoopLink_SetInputOwnerForBattler(gActiveBattler); // Linked co-op: this battler's player answers
+     if (gBattleTypeFlags & BATTLE_TYPE_PALACE)
+     {
+         *(gBattleStruct->arenaMindPoints + gActiveBattler) = 8;
+@@ -2654,6 +2661,8 @@ static void PlayerHandleChooseItem(void)
+ {
+     s32 i;
+ 
++    CoopLink_SetInputOwnerForBattler(gActiveBattler); // Linked co-op: this battler's player answers
++
+     BeginNormalPaletteFade(PALETTES_ALL, 0, 0, 0x10, RGB_BLACK);
+     gBattlerControllerFuncs[gActiveBattler] = OpenBagAndChooseItem;
+     gBattlerInMenuId = gActiveBattler;
+@@ -2666,6 +2675,8 @@ static void PlayerHandleChoosePokemon(void)
+ {
+     s32 i;
+ 
++    CoopLink_SetInputOwnerForBattler(gActiveBattler); // Linked co-op: this battler's player answers
++
+     for (i = 0; i < (int)ARRAY_COUNT(gBattlePartyCurrentOrder); i++)
+         gBattlePartyCurrentOrder[i] = gBattleBufferA[gActiveBattler][4 + i];
+ 
+diff --git a/src/battle_controllers.c b/src/battle_controllers.c
+index 5357f40cc..fef6aefbe 100644
+--- a/src/battle_controllers.c
++++ b/src/battle_controllers.c
+@@ -1,4 +1,5 @@
+ #include "global.h"
++#include "coop.h"
+ #include "battle.h"
+ #include "battle_ai_script_commands.h"
+ #include "battle_anim.h"
+@@ -586,6 +587,9 @@ static void SetBattlePartyIds(void)
+ {
+     s32 i, j;
+ 
++    if (Coop_SetBattlePartyIds())
++        return;
++
+     if (!(gBattleTypeFlags & BATTLE_TYPE_MULTI))
+     {
+         for (i = 0; i < gBattlersCount; i++)
+diff --git a/src/battle_main.c b/src/battle_main.c
+index 11fc16860..17c915e86 100644
+--- a/src/battle_main.c
++++ b/src/battle_main.c
+@@ -1,4 +1,6 @@
+ #include "global.h"
++#include "coop_link.h"
++#include "coop.h"
+ #include "battle.h"
+ #include "battle_anim.h"
+ #include "battle_ai_script_commands.h"
+@@ -592,6 +594,7 @@ void CB2_InitBattle(void)
+     AllocateBattleSpritesData();
+     AllocateMonSpritesGfx();
+     RecordedBattle_ClearFrontierPassFlag();
++    Coop_ResetBattle();
+ 
+     if (gBattleTypeFlags & BATTLE_TYPE_MULTI)
+     {
+@@ -700,6 +703,9 @@ static void CB2_InitBattleInternal(void)
+         SetWildMonHeldItem();
+     }
+ 
++    // Turns the battle into a co-op double battle if both players can fight.
++    Coop_InitBattle();
++
+     gMain.inBattle = TRUE;
+     gSaveBlock2Ptr->frontier.disableRecordBattle = FALSE;
+ 
+@@ -2084,7 +2090,8 @@ static void UNUSED HBlankCB_Battle(void)
+ void VBlankCB_Battle(void)
+ {
+     // Change gRngSeed every vblank unless the battle could be recorded.
+-    if (!(gBattleTypeFlags & (BATTLE_TYPE_LINK | BATTLE_TYPE_FRONTIER | BATTLE_TYPE_RECORDED)))
++    // (In linked co-op the RNG advances once per simulated frame instead.)
++    if (!gCoopLinkActive && !(gBattleTypeFlags & (BATTLE_TYPE_LINK | BATTLE_TYPE_FRONTIER | BATTLE_TYPE_RECORDED)))
+         Random();
+ 
+     SetGpuReg(REG_OFFSET_BG0HOFS, gBattle_BG0_X);
+@@ -3019,6 +3026,7 @@ void BeginBattleIntroDummy(void)
+ void BeginBattleIntro(void)
+ {
+     BattleStartClearSetData();
++    Coop_MarkAbsentBattlersAtStart();
+     gBattleCommunication[1] = 0;
+     gBattleMainFunc = BattleIntroGetMonsData;
+ }
+@@ -3400,6 +3408,16 @@ static void BattleIntroDrawTrainersOrMonsSprites(void)
+ 
+     for (gActiveBattler = 0; gActiveBattler < gBattlersCount; gActiveBattler++)
+     {
++        if (Coop_IsBattlerAbsent(gActiveBattler))
++        {
++            // Co-op: this battler's slot starts the battle empty.
++            ptr = (u8 *)&gBattleMons[gActiveBattler];
++            for (i = 0; i < sizeof(struct BattlePokemon); i++)
++                ptr[i] = 0;
++            gBattlerSpriteIds[gActiveBattler] = MAX_SPRITES;
++            continue;
++        }
++
+         if ((gBattleTypeFlags & BATTLE_TYPE_SAFARI)
+             && GetBattlerSide(gActiveBattler) == B_SIDE_PLAYER)
+         {
+@@ -3689,6 +3707,7 @@ static void BattleIntroRecordMonsToDex(void)
+         for (gActiveBattler = 0; gActiveBattler < gBattlersCount; gActiveBattler++)
+         {
+             if (GetBattlerSide(gActiveBattler) == B_SIDE_OPPONENT
++             && !Coop_IsBattlerAbsent(gActiveBattler)
+              && !(gBattleTypeFlags & (BATTLE_TYPE_EREADER_TRAINER
+                                       | BATTLE_TYPE_FRONTIER
+                                       | BATTLE_TYPE_LINK
+diff --git a/src/battle_message.c b/src/battle_message.c
+index a15a4b976..bac6c0f4f 100644
+--- a/src/battle_message.c
++++ b/src/battle_message.c
+@@ -1,4 +1,5 @@
+ #include "global.h"
++#include "coop.h"
+ #include "battle.h"
+ #include "battle_anim.h"
+ #include "battle_controllers.h"
+@@ -2023,7 +2024,8 @@ void BufferStringBattle(u16 stringID)
+         {
+             if (gBattleTypeFlags & BATTLE_TYPE_LEGENDARY)
+                 stringPtr = sText_LegendaryPkmnAppeared;
+-            else if (gBattleTypeFlags & BATTLE_TYPE_DOUBLE) // interesting, looks like they had something planned for wild double battles
++            else if (gBattleTypeFlags & BATTLE_TYPE_DOUBLE // interesting, looks like they had something planned for wild double battles
++                  && !Coop_IsBattlerAbsent(GetBattlerAtPosition(B_POSITION_OPPONENT_RIGHT)))
+                 stringPtr = sText_TwoWildPkmnAppeared;
+             else if (gBattleTypeFlags & BATTLE_TYPE_WALLY_TUTORIAL)
+                 stringPtr = sText_WildPkmnAppearedPause;
+@@ -2052,7 +2054,7 @@ void BufferStringBattle(u16 stringID)
+         }
+         else
+         {
+-            if (gBattleTypeFlags & BATTLE_TYPE_DOUBLE)
++            if ((gBattleTypeFlags & BATTLE_TYPE_DOUBLE) && !Coop_IsPartnerAbsent(GetBattlerAtPosition(B_POSITION_OPPONENT_LEFT)))
+             {
+                 if (gBattleTypeFlags & BATTLE_TYPE_TWO_OPPONENTS)
+                     stringPtr = sText_TwoTrainersSentPkmn;
+diff --git a/src/battle_pyramid.c b/src/battle_pyramid.c
+index 149092625..577957d67 100644
+--- a/src/battle_pyramid.c
++++ b/src/battle_pyramid.c
+@@ -1360,7 +1360,7 @@ void GenerateBattlePyramidWildMon(void)
+ 
+     id = GetMonData(&gEnemyParty[0], MON_DATA_SPECIES, NULL) - 1;
+     SetMonData(&gEnemyParty[0], MON_DATA_SPECIES, &wildMons[id].species);
+-    GetSpeciesName(name, wildMons[id].species);
++    GetSpeciesNamePadded(name, wildMons[id].species);
+     SetMonData(&gEnemyParty[0], MON_DATA_NICKNAME, &name);
+     if (lvl != FRONTIER_LVL_50)
+     {
+diff --git a/src/battle_script_commands.c b/src/battle_script_commands.c
+index 3af09ec7a..876b7b816 100644
+--- a/src/battle_script_commands.c
++++ b/src/battle_script_commands.c
+@@ -1,4 +1,5 @@
+ #include "global.h"
++#include "coop.h"
+ #include "battle.h"
+ #include "battle_message.h"
+ #include "battle_anim.h"
+@@ -4838,7 +4839,8 @@ static void Cmd_jumpifcantswitch(void)
+             if (GetMonData(&party[i], MON_DATA_HP) != 0
+              && GetMonData(&party[i], MON_DATA_SPECIES) != SPECIES_NONE
+              && !GetMonData(&party[i], MON_DATA_IS_EGG)
+-             && i != gBattlerPartyIndexes[battlerIn1] && i != gBattlerPartyIndexes[battlerIn2])
++             && i != gBattlerPartyIndexes[battlerIn1] && i != gBattlerPartyIndexes[battlerIn2]
++             && Coop_IsMonUsableByBattler(gActiveBattler, &party[i]))
+                 break;
+         }
+ 
+@@ -7294,6 +7296,21 @@ static void Cmd_forcerandomswitch(void)
+             battler2PartyId = gBattlerPartyIndexes[gBattlerTarget];
+             battler1PartyId = gBattlerPartyIndexes[BATTLE_PARTNER(gBattlerTarget)];
+         }
++        else if (IsCoopBattle() && GetBattlerSide(gBattlerTarget) == B_SIDE_PLAYER)
++        {
++            // Co-op: only the target's own player's Pokémon are counted (see the loops below),
++            // so one other usable Pokémon besides the target is enough.
++            firstMonId = 0;
++            #ifdef BUGFIX
++            lastMonId = PARTY_SIZE - 1;
++            #else
++            lastMonId = PARTY_SIZE;
++            #endif
++            monsCount = PARTY_SIZE;
++            minNeeded = 1;
++            battler2PartyId = gBattlerPartyIndexes[gBattlerTarget];
++            battler1PartyId = gBattlerPartyIndexes[BATTLE_PARTNER(gBattlerTarget)];
++        }
+         else if (gBattleTypeFlags & BATTLE_TYPE_DOUBLE)
+         {
+             firstMonId = 0;
+@@ -7325,7 +7342,8 @@ static void Cmd_forcerandomswitch(void)
+         {
+             if (GetMonData(&party[i], MON_DATA_SPECIES) != SPECIES_NONE
+              && !GetMonData(&party[i], MON_DATA_IS_EGG)
+-             && GetMonData(&party[i], MON_DATA_HP) != 0)
++             && GetMonData(&party[i], MON_DATA_HP) != 0
++             && Coop_IsMonUsableByBattler(gBattlerTarget, &party[i]))
+              {
+                  validMons++;
+              }
+@@ -7349,7 +7367,8 @@ static void Cmd_forcerandomswitch(void)
+                     while (i == battler2PartyId || i == battler1PartyId);
+                 } while (GetMonData(&party[i], MON_DATA_SPECIES) == SPECIES_NONE
+                        || GetMonData(&party[i], MON_DATA_IS_EGG) == TRUE
+-                       || GetMonData(&party[i], MON_DATA_HP) == 0); //should be one while loop, but that doesn't match.
++                       || GetMonData(&party[i], MON_DATA_HP) == 0
++                       || !Coop_IsMonUsableByBattler(gBattlerTarget, &party[i])); //should be one while loop, but that doesn't match.
+         // Bug: If the opponent uses forced switchout moves in a Multi Battle, the player side party
+         //      might get the order messed up where the mons appear in the wrong slots of the party screen.
+         //      This causes a hardlock when all mons on the player side are knocked out and the player
+@@ -9910,7 +9929,7 @@ static void Cmd_handleballthrow(void)
+         return;
+ 
+     gActiveBattler = gBattlerAttacker;
+-    gBattlerTarget = BATTLE_OPPOSITE(gBattlerAttacker);
++    gBattlerTarget = Coop_GetOpposingBattler(gBattlerAttacker);
+ 
+     if (gBattleTypeFlags & BATTLE_TYPE_TRAINER)
+     {
+@@ -10054,18 +10073,18 @@ static void Cmd_handleballthrow(void)
+ 
+ static void Cmd_givecaughtmon(void)
+ {
+-    if (GiveMonToPlayer(&gEnemyParty[gBattlerPartyIndexes[BATTLE_OPPOSITE(gBattlerAttacker)]]) != MON_GIVEN_TO_PARTY)
++    if (GiveMonToPlayer(&gEnemyParty[gBattlerPartyIndexes[Coop_GetOpposingBattler(gBattlerAttacker)]]) != MON_GIVEN_TO_PARTY)
+     {
+         if (!ShouldShowBoxWasFullMessage())
+         {
+             gBattleCommunication[MULTISTRING_CHOOSER] = B_MSG_SENT_SOMEONES_PC;
+             StringCopy(gStringVar1, GetBoxNamePtr(VarGet(VAR_PC_BOX_TO_SEND_MON)));
+-            GetMonData(&gEnemyParty[gBattlerPartyIndexes[BATTLE_OPPOSITE(gBattlerAttacker)]], MON_DATA_NICKNAME, gStringVar2);
++            GetMonData(&gEnemyParty[gBattlerPartyIndexes[Coop_GetOpposingBattler(gBattlerAttacker)]], MON_DATA_NICKNAME, gStringVar2);
+         }
+         else
+         {
+             StringCopy(gStringVar1, GetBoxNamePtr(VarGet(VAR_PC_BOX_TO_SEND_MON))); // box the mon was sent to
+-            GetMonData(&gEnemyParty[gBattlerPartyIndexes[BATTLE_OPPOSITE(gBattlerAttacker)]], MON_DATA_NICKNAME, gStringVar2);
++            GetMonData(&gEnemyParty[gBattlerPartyIndexes[Coop_GetOpposingBattler(gBattlerAttacker)]], MON_DATA_NICKNAME, gStringVar2);
+             StringCopy(gStringVar3, GetBoxNamePtr(GetPCBoxToSendMon())); //box the mon was going to be sent to
+             gBattleCommunication[MULTISTRING_CHOOSER] = B_MSG_SOMEONES_BOX_FULL;
+         }
+@@ -10075,9 +10094,9 @@ static void Cmd_givecaughtmon(void)
+             gBattleCommunication[MULTISTRING_CHOOSER]++;
+     }
+ 
+-    gBattleResults.caughtMonSpecies = GetMonData(&gEnemyParty[gBattlerPartyIndexes[BATTLE_OPPOSITE(gBattlerAttacker)]], MON_DATA_SPECIES, NULL);
+-    GetMonData(&gEnemyParty[gBattlerPartyIndexes[BATTLE_OPPOSITE(gBattlerAttacker)]], MON_DATA_NICKNAME, gBattleResults.caughtMonNick);
+-    gBattleResults.caughtMonBall = GetMonData(&gEnemyParty[gBattlerPartyIndexes[BATTLE_OPPOSITE(gBattlerAttacker)]], MON_DATA_POKEBALL, NULL);
++    gBattleResults.caughtMonSpecies = GetMonData(&gEnemyParty[gBattlerPartyIndexes[Coop_GetOpposingBattler(gBattlerAttacker)]], MON_DATA_SPECIES, NULL);
++    GetMonData(&gEnemyParty[gBattlerPartyIndexes[Coop_GetOpposingBattler(gBattlerAttacker)]], MON_DATA_NICKNAME, gBattleResults.caughtMonNick);
++    gBattleResults.caughtMonBall = GetMonData(&gEnemyParty[gBattlerPartyIndexes[Coop_GetOpposingBattler(gBattlerAttacker)]], MON_DATA_POKEBALL, NULL);
+ 
+     gBattlescriptCurrInstr++;
+ }
+@@ -10265,13 +10284,13 @@ static void Cmd_trygivecaughtmonnick(void)
+     case 2:
+         if (!gPaletteFade.active)
+         {
+-            GetMonData(&gEnemyParty[gBattlerPartyIndexes[BATTLE_OPPOSITE(gBattlerAttacker)]], MON_DATA_NICKNAME, gBattleStruct->caughtMonNick);
++            GetMonData(&gEnemyParty[gBattlerPartyIndexes[Coop_GetOpposingBattler(gBattlerAttacker)]], MON_DATA_NICKNAME, gBattleStruct->caughtMonNick);
+             FreeAllWindowBuffers();
+ 
+             DoNamingScreen(NAMING_SCREEN_CAUGHT_MON, gBattleStruct->caughtMonNick,
+-                           GetMonData(&gEnemyParty[gBattlerPartyIndexes[BATTLE_OPPOSITE(gBattlerAttacker)]], MON_DATA_SPECIES),
+-                           GetMonGender(&gEnemyParty[gBattlerPartyIndexes[BATTLE_OPPOSITE(gBattlerAttacker)]]),
+-                           GetMonData(&gEnemyParty[gBattlerPartyIndexes[BATTLE_OPPOSITE(gBattlerAttacker)]], MON_DATA_PERSONALITY, NULL),
++                           GetMonData(&gEnemyParty[gBattlerPartyIndexes[Coop_GetOpposingBattler(gBattlerAttacker)]], MON_DATA_SPECIES),
++                           GetMonGender(&gEnemyParty[gBattlerPartyIndexes[Coop_GetOpposingBattler(gBattlerAttacker)]]),
++                           GetMonData(&gEnemyParty[gBattlerPartyIndexes[Coop_GetOpposingBattler(gBattlerAttacker)]], MON_DATA_PERSONALITY, NULL),
+                            BattleMainCB2);
+ 
+             gBattleCommunication[MULTIUSE_STATE]++;
+@@ -10280,7 +10299,7 @@ static void Cmd_trygivecaughtmonnick(void)
+     case 3:
+         if (gMain.callback2 == BattleMainCB2 && !gPaletteFade.active)
+         {
+-            SetMonData(&gEnemyParty[gBattlerPartyIndexes[BATTLE_OPPOSITE(gBattlerAttacker)]], MON_DATA_NICKNAME, gBattleStruct->caughtMonNick);
++            SetMonData(&gEnemyParty[gBattlerPartyIndexes[Coop_GetOpposingBattler(gBattlerAttacker)]], MON_DATA_NICKNAME, gBattleStruct->caughtMonNick);
+             gBattlescriptCurrInstr = T1_READ_PTR(gBattlescriptCurrInstr + 1);
+         }
+         break;
+diff --git a/src/battle_setup.c b/src/battle_setup.c
+index 41026de72..e8ccf407d 100644
+--- a/src/battle_setup.c
++++ b/src/battle_setup.c
+@@ -1,4 +1,6 @@
+ #include "global.h"
++#include "coop.h"
++#include "coop_link.h"
+ #include "battle.h"
+ #include "battle_setup.h"
+ #include "battle_transition.h"
+@@ -908,8 +910,11 @@ u8 GetSpecialBattleTransition(s32 id)
+     return sBattleTransitionTable_BattleFrontier[var % ARRAY_COUNT(sBattleTransitionTable_BattleFrontier)];
+ }
+ 
++static void CB2_GiveCoopPlayer2Starter(void);
++
+ void ChooseStarter(void)
+ {
++    gCoopChoosingPlayer2Starter = FALSE;
+     SetMainCallback2(CB2_ChooseStarter);
+     gMain.savedCallback = CB2_GiveStarter;
+ }
+@@ -921,6 +926,28 @@ static void CB2_GiveStarter(void)
+     *GetVarPointer(VAR_STARTER_MON) = gSpecialVar_Result;
+     starterMon = GetStarterPokemon(gSpecialVar_Result);
+     ScriptGiveMon(starterMon, 5, ITEM_NONE, 0, 0, 0);
++
++    // Co-op: then Player 2 picks a starter too (any of the three).
++    if (COOP_ENABLED && Coop_CountTeam(COOP_PLAYER_2) == 0)
++    {
++        gCoopChoosingPlayer2Starter = TRUE;
++        gCoopInputOwner = COOP_PLAYER_2; // Linked co-op: Player 2's buttons choose
++        SetMainCallback2(CB2_ChooseStarter);
++        gMain.savedCallback = CB2_GiveCoopPlayer2Starter;
++        return;
++    }
++    ResetTasks();
++    PlayBattleBGM();
++    SetMainCallback2(CB2_StartFirstBattle);
++    BattleTransition_Start(B_TRANSITION_BLUR);
++}
++
++static void CB2_GiveCoopPlayer2Starter(void)
++{
++    // Joins Player 2's team (see Coop_GetOwnerForNewMon).
++    ScriptGiveMon(GetStarterPokemon(gSpecialVar_Result), 5, ITEM_NONE, 0, 0, 0);
++    gCoopChoosingPlayer2Starter = FALSE;
++    gCoopInputOwner = COOP_PLAYER_1;
+     ResetTasks();
+     PlayBattleBGM();
+     SetMainCallback2(CB2_StartFirstBattle);
+@@ -1244,7 +1271,8 @@ bool8 GetTrainerFlag(void)
+ 
+ static void SetBattledTrainersFlags(void)
+ {
+-    if (gTrainerBattleOpponent_B != 0)
++    // Co-op: the mirror partner is borrowed from elsewhere in the game and can still be fought there.
++    if (gTrainerBattleOpponent_B != 0 && !Coop_IsMirrorBattle())
+         FlagSet(GetTrainerBFlag());
+     FlagSet(GetTrainerAFlag());
+ }
+@@ -1527,8 +1555,12 @@ const u8 *GetTrainerALoseText(void)
+     return gStringVar4;
+ }
+ 
++static const u8 sText_CoopMirrorLose[] = _("Your teamwork was too much for us!");
++
+ const u8 *GetTrainerBLoseText(void)
+ {
++    if (Coop_IsMirrorBattle())
++        return sText_CoopMirrorLose;
+     StringExpandPlaceholders(gStringVar4, ReturnEmptyStringIfNull(sTrainerBDefeatSpeech));
+     return gStringVar4;
+ }
+diff --git a/src/battle_util.c b/src/battle_util.c
+index 8949cdbe5..97ec1dd9a 100644
+--- a/src/battle_util.c
++++ b/src/battle_util.c
+@@ -1,4 +1,5 @@
+ #include "global.h"
++#include "coop.h"
+ #include "battle.h"
+ #include "battle_anim.h"
+ #include "battle_arena.h"
+@@ -451,18 +452,21 @@ bool8 TryRunFromBattle(u8 battler)
+     }
+     else
+     {
+-        if (!(gBattleTypeFlags & BATTLE_TYPE_DOUBLE))
++        if (!(gBattleTypeFlags & BATTLE_TYPE_DOUBLE) || IsCoopBattle())
+         {
++            // In co-op battles the opposing slot may be empty, so compare against the other foe.
++            u8 opposing = Coop_GetOpposingBattler(battler);
++
+             if (CurrentBattlePyramidLocation() != PYRAMID_LOCATION_NONE)
+             {
+                 pyramidMultiplier = GetPyramidRunMultiplier();
+-                speedVar = (gBattleMons[battler].speed * pyramidMultiplier) / (gBattleMons[BATTLE_OPPOSITE(battler)].speed) + (gBattleStruct->runTries * 30);
++                speedVar = (gBattleMons[battler].speed * pyramidMultiplier) / (gBattleMons[opposing].speed) + (gBattleStruct->runTries * 30);
+                 if (speedVar > (Random() & 0xFF))
+                     effect++;
+             }
+-            else if (gBattleMons[battler].speed < gBattleMons[BATTLE_OPPOSITE(battler)].speed)
++            else if (gBattleMons[battler].speed < gBattleMons[opposing].speed)
+             {
+-                speedVar = (gBattleMons[battler].speed * 128) / (gBattleMons[BATTLE_OPPOSITE(battler)].speed) + (gBattleStruct->runTries * 30);
++                speedVar = (gBattleMons[battler].speed * 128) / (gBattleMons[opposing].speed) + (gBattleStruct->runTries * 30);
+                 if (speedVar > (Random() & 0xFF))
+                     effect++;
+             }
+@@ -2372,7 +2376,8 @@ bool8 HasNoMonsToSwitch(u8 battler, u8 partyIdBattlerOn1, u8 partyIdBattlerOn2)
+              && GetMonData(&party[i], MON_DATA_SPECIES_OR_EGG) != SPECIES_NONE
+              && GetMonData(&party[i], MON_DATA_SPECIES_OR_EGG) != SPECIES_EGG
+              && i != partyIdBattlerOn1 && i != partyIdBattlerOn2
+-             && i != *(gBattleStruct->monToSwitchIntoId + flankId) && i != playerId[gBattleStruct->monToSwitchIntoId])
++             && i != *(gBattleStruct->monToSwitchIntoId + flankId) && i != playerId[gBattleStruct->monToSwitchIntoId]
++             && Coop_IsMonUsableByBattler(battler, &party[i]))
+                 break;
+         }
+         return (i == PARTY_SIZE);
+diff --git a/src/cable_club.c b/src/cable_club.c
+index 530532658..4357c15d9 100644
+--- a/src/cable_club.c
++++ b/src/cable_club.c
+@@ -1,4 +1,5 @@
+ #include "global.h"
++#include "coop_link.h"
+ #include "main.h"
+ #include "battle.h"
+ #include "battle_records.h"
+@@ -82,6 +83,14 @@ static void Task_ReestablishLinkAwaitConfirmation(u8 taskId);
+ 
+ static void CreateLinkupTask(u8 minPlayers, u8 maxPlayers)
+ {
++#if COOP_LINKED
++    // The link cable is busy with linked co-op: cable club features say "come again".
++    if (gCoopLinkActive)
++    {
++        CoopLink_RefuseLinkup();
++        return;
++    }
++#endif
+     if (FindTaskIdByFunc(Task_LinkupStart) == TASK_NONE)
+     {
+         u8 taskId1;
+diff --git a/src/coop.c b/src/coop.c
+new file mode 100644
+index 000000000..d199a3669
+--- /dev/null
++++ b/src/coop.c
+@@ -0,0 +1,657 @@
++#include "global.h"
++#include "battle.h"
++#include "battle_anim.h"
++#include "battle_message.h"
++#include "coop.h"
++#include "event_data.h"
++#include "battle_setup.h"
++#include "data.h"
++#include "string_util.h"
++#include "main.h"
++#include "malloc.h"
++#include "pokemon.h"
++#include "util.h"
++#include "constants/battle.h"
++#include "constants/species.h"
++#include "constants/opponents.h"
++#include "constants/trainers.h"
++#include "constants/items.h"
++
++// Battle types that keep their vanilla behavior (no co-op double battle).
++#define COOP_INELIGIBLE_BATTLE_TYPES (BATTLE_TYPE_LINK              \
++                                    | BATTLE_TYPE_LINK_IN_BATTLE    \
++                                    | BATTLE_TYPE_RECORDED          \
++                                    | BATTLE_TYPE_RECORDED_LINK     \
++                                    | BATTLE_TYPE_FRONTIER          \
++                                    | BATTLE_TYPE_MULTI             \
++                                    | BATTLE_TYPE_INGAME_PARTNER    \
++                                    | BATTLE_TYPE_TOWER_LINK_MULTI  \
++                                    | BATTLE_TYPE_SAFARI            \
++                                    | BATTLE_TYPE_WALLY_TUTORIAL    \
++                                    | BATTLE_TYPE_FIRST_BATTLE      \
++                                    | BATTLE_TYPE_TRAINER_HILL      \
++                                    | BATTLE_TYPE_EREADER_TRAINER)
++
++EWRAM_DATA bool8 gCoopBattle = FALSE;
++EWRAM_DATA bool8 gCoopChoosingPlayer2Starter = FALSE; // The starter screen is open for Player 2
++EWRAM_DATA bool8 gCoopMirrorBattle = FALSE; // The second opponent was added by co-op (see AddMirrorOpponent)
++
++static const u8 sText_CoopP1WhatWillPkmnDo[] = _("P1: What will\n{B_ACTIVE_NAME_WITH_PREFIX} do?");
++static const u8 sText_CoopP2WhatWillPkmnDo[] = _("P2: What will\n{B_ACTIVE_NAME_WITH_PREFIX} do?");
++const u8 gText_CoopNotYourMon[] = _("{STR_VAR_1} belongs to\nthe other player!");
++
++// ---------------------------------------------------------------------------
++// Ownership
++// ---------------------------------------------------------------------------
++
++u8 GetBoxMonCoopOwner(struct BoxPokemon *boxMon)
++{
++    return boxMon->coopOwner;
++}
++
++void SetBoxMonCoopOwner(struct BoxPokemon *boxMon, u8 owner)
++{
++    boxMon->coopOwner = (owner == COOP_PLAYER_2) ? COOP_PLAYER_2 : COOP_PLAYER_1;
++}
++
++u8 GetMonCoopOwner(struct Pokemon *mon)
++{
++    return GetBoxMonCoopOwner(&mon->box);
++}
++
++void SetMonCoopOwner(struct Pokemon *mon, u8 owner)
++{
++    SetBoxMonCoopOwner(&mon->box, owner);
++}
++
++void Coop_SwapOwners(struct Pokemon *mon1, struct Pokemon *mon2)
++{
++    u8 owner1 = GetMonCoopOwner(mon1);
++
++    SetMonCoopOwner(mon1, GetMonCoopOwner(mon2));
++    SetMonCoopOwner(mon2, owner1);
++}
++
++static bool8 IsPartySlotFilled(struct Pokemon *mon)
++{
++    return GetMonData(mon, MON_DATA_SPECIES, NULL) != SPECIES_NONE;
++}
++
++static bool8 IsMonAbleToBattle(struct Pokemon *mon)
++{
++    return GetMonData(mon, MON_DATA_SPECIES_OR_EGG, NULL) != SPECIES_NONE
++        && GetMonData(mon, MON_DATA_SPECIES_OR_EGG, NULL) != SPECIES_EGG
++        && !GetMonData(mon, MON_DATA_IS_EGG, NULL)
++        && GetMonData(mon, MON_DATA_HP, NULL) != 0;
++}
++
++u8 Coop_CountTeam(u8 owner)
++{
++    s32 i;
++    u8 count = 0;
++
++    for (i = 0; i < PARTY_SIZE; i++)
++    {
++        if (IsPartySlotFilled(&gPlayerParty[i]) && GetMonCoopOwner(&gPlayerParty[i]) == owner)
++            count++;
++    }
++    return count;
++}
++
++// Makes sure no player has more than COOP_TEAM_SIZE Pokémon in the party.
++// Extra Pokémon are handed to the other player. Never reorders the party.
++static void FixTeamOverflow(void)
++{
++    s32 i;
++    u8 counts[COOP_NUM_PLAYERS];
++
++    counts[COOP_PLAYER_1] = 0;
++    counts[COOP_PLAYER_2] = 0;
++
++    for (i = 0; i < PARTY_SIZE; i++)
++    {
++        u8 owner;
++
++        if (!IsPartySlotFilled(&gPlayerParty[i]))
++            continue;
++
++        owner = GetMonCoopOwner(&gPlayerParty[i]);
++        if (counts[owner] >= COOP_TEAM_SIZE)
++        {
++            owner ^= 1;
++            SetMonCoopOwner(&gPlayerParty[i], owner);
++        }
++        counts[owner]++;
++    }
++}
++
++// Puts the party in co-op order, the same layout as the party screen in a
++// co-op battle: Player 1's lead, Player 2's lead, then the rest of Player 1's
++// team, then the rest of Player 2's. Each team keeps its own order.
++static void SortPartyByOwner(void)
++{
++    struct Pokemon *sorted = AllocZeroed(sizeof(struct Pokemon) * PARTY_SIZE);
++    u8 team[COOP_NUM_PLAYERS][PARTY_SIZE];
++    u8 count[COOP_NUM_PLAYERS] = {0, 0};
++    s32 i, n = 0;
++    u8 owner;
++
++    if (sorted == NULL)
++        return;
++
++    CalculatePlayerPartyCount();
++    for (i = 0; i < gPlayerPartyCount; i++)
++    {
++        owner = GetMonCoopOwner(&gPlayerParty[i]);
++        team[owner][count[owner]++] = i;
++    }
++
++    for (owner = 0; owner < COOP_NUM_PLAYERS; owner++)
++    {
++        if (count[owner] != 0)
++            sorted[n++] = gPlayerParty[team[owner][0]];
++    }
++    for (owner = 0; owner < COOP_NUM_PLAYERS; owner++)
++    {
++        for (i = 1; i < count[owner]; i++)
++            sorted[n++] = gPlayerParty[team[owner][i]];
++    }
++    for (i = 0; i < n; i++)
++        gPlayerParty[i] = sorted[i];
++    Free(sorted);
++}
++
++// TRUE if both players have a Pokémon in the party: the party screen then
++// uses the two-column co-op layout.
++bool8 Coop_BothTeamsInParty(void)
++{
++    return COOP_ENABLED && Coop_CountTeam(COOP_PLAYER_1) != 0 && Coop_CountTeam(COOP_PLAYER_2) != 0;
++}
++
++// Must not be called during a battle, since it can reorder the party.
++void Coop_NormalizeParty(void)
++{
++    if (!COOP_ENABLED)
++        return;
++
++    FixTeamOverflow();
++    SortPartyByOwner();
++}
++
++// Returns the player who should receive a newly obtained Pokémon: whoever has
++// fewer Pokémon in the party (Player 1 on a tie), so both teams fill up evenly.
++// Does not reorder the party, so it is safe to call during battle.
++u8 Coop_GetOwnerForNewMon(void)
++{
++    u8 count1, count2;
++
++    FixTeamOverflow();
++    count1 = Coop_CountTeam(COOP_PLAYER_1);
++    count2 = Coop_CountTeam(COOP_PLAYER_2);
++
++    if (count1 >= COOP_TEAM_SIZE)
++        return COOP_PLAYER_2;
++    if (count2 >= COOP_TEAM_SIZE)
++        return COOP_PLAYER_1;
++    if (count2 < count1)
++        return COOP_PLAYER_2;
++    return COOP_PLAYER_1;
++}
++
++// ---------------------------------------------------------------------------
++// Battle
++// ---------------------------------------------------------------------------
++
++static bool8 CanTeamFight(u8 owner)
++{
++    s32 i;
++
++    for (i = 0; i < PARTY_SIZE; i++)
++    {
++        if (IsMonAbleToBattle(&gPlayerParty[i]) && GetMonCoopOwner(&gPlayerParty[i]) == owner)
++            return TRUE;
++    }
++    return FALSE;
++}
++
++void Coop_ResetBattle(void)
++{
++    gCoopBattle = FALSE;
++    gCoopMirrorBattle = FALSE;
++}
++
++// ---------------------------------------------------------------------------
++// Mirror opponent (goal 2)
++//
++// In a co-op trainer battle, the trainer gets a partner: another trainer of
++// the same class, with as many Pokémon as the trainer has (each side fields
++// up to COOP_TEAM_SIZE, like each player). The partner's Pokémon are different
++// species at the same levels. Everything is picked from the trainer's ID, so
++// a trainer always brings the same partner, and both linked GBAs agree.
++// ---------------------------------------------------------------------------
++
++static u32 HashU32(u32 x)
++{
++    x ^= x >> 16;
++    x *= 0x7FEB352D;
++    x ^= x >> 15;
++    x *= 0x846CA68B;
++    x ^= x >> 16;
++    return x;
++}
++
++static u16 GetTrainerPartyMonSpecies(u16 trainerId, u8 i, u16 *heldItem)
++{
++    const struct Trainer *trainer = &gTrainers[trainerId];
++
++    *heldItem = ITEM_NONE;
++    switch (trainer->partyFlags & (F_TRAINER_PARTY_CUSTOM_MOVESET | F_TRAINER_PARTY_HELD_ITEM))
++    {
++    case 0:
++        return trainer->party.NoItemDefaultMoves[i].species;
++    case F_TRAINER_PARTY_CUSTOM_MOVESET:
++        return trainer->party.NoItemCustomMoves[i].species;
++    case F_TRAINER_PARTY_HELD_ITEM:
++        *heldItem = trainer->party.ItemDefaultMoves[i].heldItem;
++        return trainer->party.ItemDefaultMoves[i].species;
++    default:
++        *heldItem = trainer->party.ItemCustomMoves[i].heldItem;
++        return trainer->party.ItemCustomMoves[i].species;
++    }
++}
++
++// Classes with only one person get a partner from a related class.
++static const u8 sMirrorRelatedClasses[][2] =
++{
++    {TRAINER_CLASS_AQUA_LEADER,   TRAINER_CLASS_AQUA_ADMIN},
++    {TRAINER_CLASS_MAGMA_LEADER,  TRAINER_CLASS_MAGMA_ADMIN},
++    {TRAINER_CLASS_MAGMA_ADMIN,   TRAINER_CLASS_TEAM_MAGMA},
++    {TRAINER_CLASS_COOLTRAINER_2, TRAINER_CLASS_COOLTRAINER},
++};
++
++// Same person (rematches and story variants share the trainer's name). Team
++// grunts are all called GRUNT but are different people.
++static bool8 IsSamePerson(u16 trainerId, u16 otherId)
++{
++    u8 trainerClass = gTrainers[trainerId].trainerClass;
++
++    if (StringCompare(gTrainers[trainerId].trainerName, gTrainers[otherId].trainerName) != 0)
++        return FALSE;
++    if (trainerClass == gTrainers[otherId].trainerClass
++     && (trainerClass == TRAINER_CLASS_TEAM_AQUA || trainerClass == TRAINER_CLASS_TEAM_MAGMA))
++        return trainerId == otherId;
++    return TRUE;
++}
++
++static bool8 IsMirrorCandidate(u16 trainerId, u16 trainerA, u8 trainerClass)
++{
++    return gTrainers[trainerId].trainerClass == trainerClass
++        && gTrainers[trainerId].partySize != 0
++        && !IsSamePerson(trainerId, trainerA);
++}
++
++static u16 PickMirrorTrainerOfClass(u16 trainerA, u8 trainerClass)
++{
++    u16 i, count = 0, pick;
++
++    for (i = 1; i < TRAINERS_COUNT; i++)
++    {
++        if (IsMirrorCandidate(i, trainerA, trainerClass))
++            count++;
++    }
++    if (count == 0)
++        return TRAINER_NONE;
++
++    pick = HashU32(trainerA) % count;
++    for (i = 1; i < TRAINERS_COUNT; i++)
++    {
++        if (IsMirrorCandidate(i, trainerA, trainerClass) && pick-- == 0)
++            return i;
++    }
++    return TRAINER_NONE;
++}
++
++// Another trainer of the same class (or a related one), or the same trainer
++// if there is none (e.g. the Champion, who then brings the rest of his team).
++static u16 PickMirrorTrainer(u16 trainerA)
++{
++    u8 trainerClass = gTrainers[trainerA].trainerClass;
++    u16 trainerB = PickMirrorTrainerOfClass(trainerA, trainerClass);
++    u8 i;
++
++    for (i = 0; trainerB == TRAINER_NONE && i < ARRAY_COUNT(sMirrorRelatedClasses); i++)
++    {
++        if (sMirrorRelatedClasses[i][0] == trainerClass)
++            trainerB = PickMirrorTrainerOfClass(trainerA, sMirrorRelatedClasses[i][1]);
++    }
++    return (trainerB == TRAINER_NONE) ? trainerA : trainerB;
++}
++
++static bool8 IsSpeciesUsed(u16 species, const u16 *used, u8 count)
++{
++    u8 i;
++
++    for (i = 0; i < count; i++)
++    {
++        if (used[i] == species)
++            return TRUE;
++    }
++    return FALSE;
++}
++
++// Finds the next species for the partner: first from the partner's own team,
++// then from other trainers of the partner's class, then from any trainer. Never a
++// species already in this battle.
++static u16 PickMirrorSpecies(u16 trainerB, u16 trainerA, u32 seed, const u16 *used, u8 usedCount, u16 *heldItem)
++{
++    u16 pass, n, t, i, start, species;
++
++    for (pass = 0; pass < 3; pass++)
++    {
++        start = (pass == 0) ? trainerB : 1 + seed % (TRAINERS_COUNT - 1);
++        for (n = 0; n < TRAINERS_COUNT; n++)
++        {
++            t = start + n;
++            if (t >= TRAINERS_COUNT)
++                t -= TRAINERS_COUNT - 1; // Trainer IDs start at 1
++            if (pass == 0 && t != trainerB)
++                break;
++            if (pass == 1 && gTrainers[t].trainerClass != gTrainers[trainerB].trainerClass)
++                continue;
++            for (i = 0; i < gTrainers[t].partySize; i++)
++            {
++                u8 slot = (i + seed) % gTrainers[t].partySize;
++                species = GetTrainerPartyMonSpecies(t, slot, heldItem);
++                if (species == SPECIES_NONE || species == SPECIES_EGG || IsSpeciesUsed(species, used, usedCount))
++                    continue;
++                if (pass != 0)
++                    *heldItem = ITEM_NONE; // Only the partner's own Pokémon keep their items
++                return species;
++            }
++        }
++    }
++    *heldItem = ITEM_NONE;
++    return SPECIES_ZIGZAGOON; // Not reached in practice
++}
++
++// Keeps the trainer's strongest COOP_TEAM_SIZE Pokémon (in their original
++// order) in slots 0-2, and gives the partner the same number in slots 3-5.
++static void AddMirrorOpponent(void)
++{
++    struct Pokemon *kept = AllocZeroed(sizeof(struct Pokemon) * COOP_TEAM_SIZE);
++    u16 used[PARTY_SIZE];
++    u8 levels[COOP_TEAM_SIZE];
++    u8 count, keptCount, i, j;
++    u16 trainerA = gTrainerBattleOpponent_A;
++    u16 trainerB;
++
++    if (kept == NULL)
++        return;
++
++    count = CalculateEnemyPartyCount();
++    if (count == 0)
++    {
++        Free(kept);
++        return;
++    }
++
++    // Strongest Pokémon first (later ones win ties: trainers lead up to their ace).
++    keptCount = 0;
++    for (i = 0; i < count; i++)
++    {
++        u8 rank = 0;
++        u8 level = GetMonData(&gEnemyParty[i], MON_DATA_LEVEL, NULL);
++
++        for (j = 0; j < count; j++)
++        {
++            u8 other = GetMonData(&gEnemyParty[j], MON_DATA_LEVEL, NULL);
++            if (other > level || (other == level && j > i))
++                rank++;
++        }
++        if (rank < COOP_TEAM_SIZE)
++            kept[keptCount++] = gEnemyParty[i];
++    }
++
++    ZeroEnemyPartyMons();
++    for (i = 0; i < keptCount; i++)
++    {
++        gEnemyParty[i] = kept[i];
++        used[i] = GetMonData(&kept[i], MON_DATA_SPECIES, NULL);
++        levels[i] = GetMonData(&kept[i], MON_DATA_LEVEL, NULL);
++    }
++    Free(kept);
++
++    trainerB = PickMirrorTrainer(trainerA);
++    for (i = 0; i < keptCount; i++)
++    {
++        struct Pokemon *mon = &gEnemyParty[COOP_TEAM_SIZE + i];
++        u32 seed = HashU32(trainerA * 8 + i);
++        u16 heldItem;
++        u16 species = PickMirrorSpecies(trainerB, trainerA, seed, used, keptCount + i, &heldItem);
++        u8 fixedIV = GetMonData(&gEnemyParty[i], MON_DATA_HP_IV, NULL);
++
++        used[keptCount + i] = species;
++        CreateMon(mon, species, levels[i], fixedIV, TRUE, seed, OT_ID_RANDOM_NO_SHINY, 0);
++        SetMonData(mon, MON_DATA_HELD_ITEM, &heldItem);
++    }
++
++    gTrainerBattleOpponent_B = trainerB;
++    gBattleTypeFlags |= BATTLE_TYPE_TWO_OPPONENTS;
++    gCoopMirrorBattle = TRUE;
++}
++
++bool8 Coop_IsMirrorBattle(void)
++{
++    return gCoopMirrorBattle;
++}
++
++// Called from CB2_InitBattleInternal once the enemy party has been created.
++void Coop_InitBattle(void)
++{
++    gCoopBattle = FALSE;
++
++    if (!COOP_ENABLED)
++        return;
++    if (gBattleTypeFlags & COOP_INELIGIBLE_BATTLE_TYPES)
++        return;
++
++    Coop_NormalizeParty();
++
++    // If only one player can fight, the battle plays out as in the original game.
++    if (!CanTeamFight(COOP_PLAYER_1) || !CanTeamFight(COOP_PLAYER_2))
++        return;
++
++    gCoopBattle = TRUE;
++    gBattleTypeFlags |= BATTLE_TYPE_DOUBLE;
++
++    // Trainers get a partner with a mirrored team.
++    if ((gBattleTypeFlags & BATTLE_TYPE_TRAINER)
++     && !(gBattleTypeFlags & (BATTLE_TYPE_TWO_OPPONENTS | BATTLE_TYPE_SECRET_BASE)))
++        AddMirrorOpponent();
++}
++
++bool8 IsCoopBattle(void)
++{
++    return gCoopBattle && gMain.inBattle;
++}
++
++u8 Coop_GetBattlerOwner(u8 battler)
++{
++    if (GetBattlerPosition(battler) & BIT_FLANK)
++        return COOP_PLAYER_2;
++    else
++        return COOP_PLAYER_1;
++}
++
++// Whether the given battler is allowed to switch to / be replaced by this Pokémon.
++// Always TRUE outside co-op battles and for the opponent's side.
++bool8 Coop_IsMonUsableByBattler(u8 battler, struct Pokemon *mon)
++{
++    if (!IsCoopBattle() || GetBattlerSide(battler) != B_SIDE_PLAYER)
++        return TRUE;
++
++    return GetMonCoopOwner(mon) == Coop_GetBattlerOwner(battler);
++}
++
++static u8 GetFirstAbleMon(struct Pokemon *party, s32 exclude, s32 owner)
++{
++    s32 i;
++
++    for (i = 0; i < PARTY_SIZE; i++)
++    {
++        if (i == exclude)
++            continue;
++        if (owner >= 0 && GetMonCoopOwner(&party[i]) != owner)
++            continue;
++        if (IsMonAbleToBattle(&party[i]))
++            return i;
++    }
++    return PARTY_SIZE;
++}
++
++// Picks the Pokémon each battler starts with. Returns FALSE if this is not a co-op battle,
++// in which case the vanilla logic is used.
++bool8 Coop_SetBattlePartyIds(void)
++{
++    u8 battler, left, right;
++    s32 i, id;
++
++    if (!IsCoopBattle())
++        return FALSE;
++
++    // Player side: left is Player 1, right is Player 2.
++    for (battler = 0; battler < gBattlersCount; battler++)
++    {
++        if (GetBattlerSide(battler) != B_SIDE_PLAYER)
++            continue;
++
++        id = GetFirstAbleMon(gPlayerParty, -1, Coop_GetBattlerOwner(battler));
++        gBattlerPartyIndexes[battler] = (id == PARTY_SIZE) ? 0 : id;
++    }
++
++    // Opponent side
++    left = GetBattlerAtPosition(B_POSITION_OPPONENT_LEFT);
++    right = GetBattlerAtPosition(B_POSITION_OPPONENT_RIGHT);
++    if (gBattleTypeFlags & BATTLE_TYPE_TWO_OPPONENTS)
++    {
++        gBattlerPartyIndexes[left] = 0;
++        gBattlerPartyIndexes[right] = PARTY_SIZE / 2;
++        return TRUE;
++    }
++
++    id = GetFirstAbleMon(gEnemyParty, -1, -1);
++    gBattlerPartyIndexes[left] = (id == PARTY_SIZE) ? 0 : id;
++
++    id = GetFirstAbleMon(gEnemyParty, gBattlerPartyIndexes[left], -1);
++    if (id == PARTY_SIZE)
++    {
++        // The opponent only has one Pokémon. Point the right battler at a slot
++        // that can't fight (preferably an empty one); it starts the battle absent.
++        for (i = 0; i < PARTY_SIZE; i++)
++        {
++            if (i != gBattlerPartyIndexes[left] && !IsPartySlotFilled(&gEnemyParty[i]))
++                break;
++        }
++        if (i == PARTY_SIZE)
++        {
++            for (i = 0; i < PARTY_SIZE; i++)
++            {
++                if (i != gBattlerPartyIndexes[left] && GetMonData(&gEnemyParty[i], MON_DATA_HP, NULL) == 0)
++                    break;
++            }
++        }
++        id = (i == PARTY_SIZE) ? gBattlerPartyIndexes[left] : i;
++    }
++    gBattlerPartyIndexes[right] = id;
++    return TRUE;
++}
++
++// Called at the start of the battle intro, right after the absent flags are cleared.
++void Coop_MarkAbsentBattlersAtStart(void)
++{
++    u8 left, right;
++
++    if (!IsCoopBattle() || (gBattleTypeFlags & BATTLE_TYPE_TWO_OPPONENTS))
++        return;
++
++    left = GetBattlerAtPosition(B_POSITION_OPPONENT_LEFT);
++    right = GetBattlerAtPosition(B_POSITION_OPPONENT_RIGHT);
++    if (gBattlerPartyIndexes[right] == gBattlerPartyIndexes[left]
++     || !IsMonAbleToBattle(&gEnemyParty[gBattlerPartyIndexes[right]]))
++        gAbsentBattlerFlags |= gBitTable[right];
++}
++
++bool8 Coop_IsBattlerAbsent(u8 battler)
++{
++    return IsCoopBattle() && (gAbsentBattlerFlags & gBitTable[battler]);
++}
++
++bool8 Coop_IsPartnerAbsent(u8 battler)
++{
++    return Coop_IsBattlerAbsent(BATTLE_PARTNER(battler));
++}
++
++// The battler directly across the field, or the other opposing battler if that slot is empty.
++u8 Coop_GetOpposingBattler(u8 battler)
++{
++    u8 opposing = BATTLE_OPPOSITE(battler);
++
++    if (IsCoopBattle() && (gAbsentBattlerFlags & gBitTable[opposing]))
++        opposing = BATTLE_PARTNER(opposing);
++    return opposing;
++}
++
++const u8 *Coop_GetWhatWillPkmnDoText(u8 battler)
++{
++    if (!IsCoopBattle() || GetBattlerSide(battler) != B_SIDE_PLAYER)
++        return gText_WhatWillPkmnDo;
++    if (Coop_GetBattlerOwner(battler) == COOP_PLAYER_2)
++        return sText_CoopP2WhatWillPkmnDo;
++    return sText_CoopP1WhatWillPkmnDo;
++}
++
++// ---------------------------------------------------------------------------
++// PC: CO-OP TEAMS (goal 3)
++// ---------------------------------------------------------------------------
++
++static const u8 sText_P1[] = _("P1");
++static const u8 sText_P2[] = _("P2");
++
++static void CopyOwnerName(u8 *dest, u8 owner)
++{
++    StringCopy(dest, (owner == COOP_PLAYER_2) ? sText_P2 : sText_P1);
++}
++
++// gSpecialVar_0x8004: party slot. Returns 1 if the other team is already full.
++u16 Coop_TryMoveMonToOtherTeam(void)
++{
++    struct Pokemon *mon = &gPlayerParty[gSpecialVar_0x8004];
++    u8 other = GetMonCoopOwner(mon) ^ 1;
++
++    GetMonData(mon, MON_DATA_NICKNAME, gStringVar1);
++    StringGet_Nickname(gStringVar1);
++    CopyOwnerName(gStringVar2, other);
++    if (Coop_CountTeam(other) >= COOP_TEAM_SIZE)
++        return 1;
++    SetMonCoopOwner(mon, other);
++    Coop_NormalizeParty();
++    return 0;
++}
++
++// gSpecialVar_0x8005 and gSpecialVar_0x8004: party slots of two Pokémon on
++// different teams. Returns 1 if they're on the same team.
++u16 Coop_TrySwapTeamMons(void)
++{
++    struct Pokemon *mon1 = &gPlayerParty[gSpecialVar_0x8005];
++    struct Pokemon *mon2 = &gPlayerParty[gSpecialVar_0x8004];
++
++    if (GetMonCoopOwner(mon1) == GetMonCoopOwner(mon2))
++        return 1;
++    GetMonData(mon1, MON_DATA_NICKNAME, gStringVar1);
++    StringGet_Nickname(gStringVar1);
++    GetMonData(mon2, MON_DATA_NICKNAME, gStringVar3);
++    StringGet_Nickname(gStringVar3);
++    Coop_SwapOwners(mon1, mon2);
++    Coop_NormalizeParty();
++    return 0;
++}
+diff --git a/src/coop_link.c b/src/coop_link.c
+new file mode 100644
+index 000000000..8c8950443
+--- /dev/null
++++ b/src/coop_link.c
+@@ -0,0 +1,960 @@
++#include "global.h"
++#include "battle.h"
++#include "battle_anim.h"
++#include "battle_main.h"
++#include "bg.h"
++#include "coop.h"
++#include "coop_link.h"
++#include "dma3.h"
++#include "field_message_box.h"
++#include "gpu_regs.h"
++#include "link.h"
++#include "m4a.h"
++#include "main.h"
++#include "main_menu.h"
++#include "new_game.h"
++#include "load_save.h"
++#include "malloc.h"
++#include "menu.h"
++#include "overworld.h"
++#include "palette.h"
++#include "pokemon.h"
++#include "random.h"
++#include "reload_save.h"
++#include "rtc.h"
++#include "save.h"
++#include "script.h"
++#include "sound.h"
++#include "string_util.h"
++#include "task.h"
++#include "text.h"
++#include "text_window.h"
++#include "trainer_hill.h"
++#include "window.h"
++#include "gba/flash_internal.h"
++#include "event_data.h"
++#include "constants/cable_club.h"
++#include "constants/rgb.h"
++#include "constants/songs.h"
++
++// Linked co-op core: link-up screen, per-frame lockstep, shared clock, input
++// ownership and desync detection. See coop_link.h for the overall design.
++//
++// The session starts by reloading the save, which wipes EWRAM: the few globals
++// below live in IWRAM, and the rest (sCoop) is carried across the reload.
++
++#define LINKCMD_COOP_KEYS   0x6C0B
++#define LINKTYPE_COOP       0x7711
++#define COOP_SYNC_MAGIC     0x504F4F43 // "COOP"
++
++#define HASH_INTERVAL       32  // Compare game state every this many frames
++#define HASH_HISTORY        8
++#define INPUT_DELAY         2   // Frames between pressing a button and the game seeing it
++#define KEY_FIFO_SIZE       16
++
++struct CoopSyncBlock
++{
++    u32 magic;
++    u32 saveHash;
++    u32 rngSeed;
++    struct SiiRtcInfo rtc;
++    u8 startMode;       // COOP_START_CONTINUE / COOP_START_NEW_GAME
++    u8 saveFileStatus;  // New game: Player 1's, so both ask the same "overwrite?" question when saving
++    u8 optionsButtonMode;
++    u8 optionsTextSpeed;
++    u8 optionsWindowFrameType;
++    u8 optionsSound;
++    u8 optionsBattleStyle;
++    u8 optionsBattleSceneOff;
++};
++
++bool8 gCoopLinkActive;
++u8 gCoopLocalPlayer;
++u8 gCoopInputOwner;
++u32 gCoopTick;
++u32 gCoopDesyncTick;
++#if COOP_DEBUG_DESYNC
++u32 gCoopDebugFreezeTick;
++#endif
++
++// Session state. Kept in EWRAM to save IWRAM (the stack lives right above
++// IWRAM's variables); CB2_CoopFirstTick carries it across ReloadSave.
++struct CoopLinkState
++{
++    bool8 tickRan;
++    u16 keyFifo[COOP_NUM_PLAYERS][KEY_FIFO_SIZE]; // Each player's buttons, one entry per frame
++    u8 keyFifoHead[COOP_NUM_PLAYERS];
++    u8 keyFifoCount[COOP_NUM_PLAYERS];
++    u32 packetsSent;
++    u32 ticksEnded;
++    u32 soundSteps;
++    u16 playerKeys[COOP_NUM_PLAYERS];
++    bool8 inBattlePrompt; // A player is choosing a battle action
++    u16 prevPlayerKeys[COOP_NUM_PLAYERS];
++    u16 virtualPrevHeld;
++    u16 virtualRepeat;
++    u32 rngSeed;
++    struct SiiRtcInfo baseRtc;
++    u16 hashTicks[HASH_HISTORY];
++    u32 hashValues[HASH_HISTORY];
++    u8 hashPos;
++    u16 sendHashTick;
++    u32 sendHash;
++    bool8 errorShown;
++    u8 startMode;
++    struct CoopSyncBlock newGameSettings; // Player 1's sync block (options etc. for a new game)
++};
++
++static EWRAM_DATA struct CoopLinkState sCoop = {0};
++
++static void Task_CoopLinkup(u8 taskId);
++static void LinkCB_CoopSendKeys(void);
++static void Task_CoopMessageWaitForA(u8 taskId);
++static void CB2_CoopFirstTick(void);
++static void ShowCoopErrorScreen(const u8 *text);
++static void CheckRemoteHash(u16 tick, u32 hash);
++
++static const u8 sText_Waiting[] = _("Co-op link\nWaiting for the other player...\n\nB: Cancel");
++static const u8 sText_Syncing[] = _("Co-op link\nConnected! Syncing...");
++static const u8 sText_ModeMismatch[] = _("Both players must choose\nthe same option:\nCONTINUE or NEW GAME.\nA: Return to title");
++static const u8 sText_SaveMismatch[] = _("The two save files don't match!\nCopy Player 1's save file over\nPlayer 2's and try again.\nA: Return to title");
++static const u8 sText_LinkFailed[] = _("Co-op link failed.\n\n\nA: Return to title");
++static const u8 sText_LinkLost[] = _("The co-op link was lost.\n\n\nA: Return to title");
++static const u8 sText_Desync[] = _("Co-op desync!\nThe two games got out of step.\nPlease reset both games.\nA: Return to title");
++
++// ---------------------------------------------------------------------------
++// Link-up screen
++// ---------------------------------------------------------------------------
++
++static const struct BgTemplate sCoopBgTemplates[] =
++{
++    {
++        .bg = 0,
++        .charBaseIndex = 0,
++        .mapBaseIndex = 31,
++        .screenSize = 0,
++        .paletteMode = 0,
++        .priority = 0,
++        .baseTile = 0,
++    },
++    {
++        .bg = 3,
++        .charBaseIndex = 0,
++        .mapBaseIndex = 30,
++        .screenSize = 0,
++        .paletteMode = 0,
++        .priority = 1,
++        .baseTile = 0,
++    },
++};
++
++static const struct WindowTemplate sCoopWindowTemplates[] =
++{
++    {
++        .bg = 0,
++        .tilemapLeft = 2,
++        .tilemapTop = 5,
++        .width = 26,
++        .height = 8,
++        .paletteNum = 15,
++        .baseBlock = 11,
++    },
++    DUMMY_WIN_TEMPLATE
++};
++
++static void CoopScreen_MainCB(void)
++{
++    RunTasks();
++    UpdatePaletteFade();
++}
++
++static void CoopScreen_VBlankCB(void)
++{
++    TransferPlttBuffer();
++}
++
++static void CoopScreen_Init(void)
++{
++    u16 i;
++
++    SetVBlankCallback(NULL);
++    SetGpuReg(REG_OFFSET_DISPCNT, DISPCNT_MODE_0);
++    SetGpuReg(REG_OFFSET_BG0HOFS, 0);
++    SetGpuReg(REG_OFFSET_BG0VOFS, 0);
++    SetGpuReg(REG_OFFSET_BG3HOFS, 0);
++    SetGpuReg(REG_OFFSET_BG3VOFS, 0);
++    SetGpuReg(REG_OFFSET_WIN0H, 0);
++    SetGpuReg(REG_OFFSET_WIN0V, 0);
++    SetGpuReg(REG_OFFSET_WININ, 0);
++    SetGpuReg(REG_OFFSET_WINOUT, 0);
++    SetGpuReg(REG_OFFSET_BLDCNT, 0);
++    SetGpuReg(REG_OFFSET_BLDALPHA, 0);
++    SetGpuReg(REG_OFFSET_BLDY, 0);
++    DmaFill16(3, 0, (void *)VRAM, VRAM_SIZE);
++    DmaFill32(3, 0, (void *)OAM, OAM_SIZE);
++    DmaFill16(3, 0, (void *)(PLTT + 2), PLTT_SIZE - 2);
++    ResetPaletteFade();
++    gPlttBufferUnfaded[0] = RGB_WHITE;
++    gPlttBufferFaded[0] = RGB_WHITE;
++    gPlttBufferUnfaded[1] = RGB(5, 10, 14);
++    gPlttBufferFaded[1] = RGB(5, 10, 14);
++    for (i = 0; i < 0x10; i++)
++        ((u16 *)(VRAM + 0x20))[i] = 0x1111;
++    for (i = 0; i < 0x400; i++)
++        ((u16 *)(BG_SCREEN_ADDR(30)))[i] = 0x0001;
++    ResetTasks();
++    ResetSpriteData();
++    ResetBgsAndClearDma3BusyFlags(0);
++    InitBgsFromTemplates(0, sCoopBgTemplates, ARRAY_COUNT(sCoopBgTemplates));
++    SetGpuReg(REG_OFFSET_DISPCNT, DISPCNT_OBJ_ON | DISPCNT_OBJ_1D_MAP);
++    ShowBg(0);
++    ShowBg(3);
++    InitWindows(sCoopWindowTemplates);
++    DeactivateAllTextPrinters();
++    FillWindowPixelBuffer(0, PIXEL_FILL(1));
++    LoadWindowGfx(0, 0, 2, BG_PLTT_ID(14));
++    LoadPalette(gStandardMenuPalette, BG_PLTT_ID(15), PLTT_SIZE_4BPP);
++    DrawStdFrameWithCustomTileAndPalette(0, FALSE, 2, 14);
++    PutWindowTilemap(0);
++    CopyWindowToVram(0, COPYWIN_FULL);
++    EnableInterrupts(INTR_FLAG_VBLANK);
++    SetVBlankCallback(CoopScreen_VBlankCB);
++    SetMainCallback2(CoopScreen_MainCB);
++}
++
++static void CoopScreen_Print(const u8 *text)
++{
++    FillWindowPixelBuffer(0, PIXEL_FILL(1));
++    AddTextPrinterParameterized(0, FONT_NORMAL, text, 0, 1, 0, NULL);
++    CopyWindowToVram(0, COPYWIN_FULL);
++}
++
++// Called by the main menu: CONTINUE or NEW GAME.
++void CoopLink_StartFromMainMenu(u8 startMode)
++{
++    sCoop.startMode = startMode;
++    gCoopLinkActive = FALSE;
++    gCoopDesyncTick = 0;
++    sCoop.errorShown = FALSE;
++    CoopScreen_Init();
++    CreateTask(Task_CoopLinkup, 0);
++}
++
++// Hash of both save slots in flash. Both GBAs must start from the same save.
++static u32 HashSaveFlash(void)
++{
++    u32 hash = 2166136261u;
++    u8 *buffer = Alloc(SECTOR_SIZE);
++    s32 sector, i;
++
++    if (buffer == NULL)
++        return 0;
++    for (sector = 0; sector < NUM_SECTORS_PER_SLOT * 2; sector++)
++    {
++        ReadFlash(sector, 0, buffer, SECTOR_SIZE);
++        for (i = 0; i < SECTOR_SIZE; i++)
++            hash = (hash ^ buffer[i]) * 16777619u;
++    }
++    Free(buffer);
++    return hash;
++}
++
++enum {
++    LINKUP_OPEN,
++    LINKUP_WAIT_PLAYERS,
++    LINKUP_CONFIRM,
++    LINKUP_EXCHANGE,
++    LINKUP_SEND_SYNC,
++    LINKUP_WAIT_SYNC,
++    LINKUP_STANDBY,
++    LINKUP_WAIT_STANDBY,
++    LINKUP_START,
++};
++
++#define tState data[0]
++#define tTimer data[1]
++
++static void LinkupFailed(u8 taskId, const u8 *text)
++{
++    gCoopLinkActive = FALSE;
++    CloseLink();
++    CoopScreen_Print(text);
++    PlaySE(SE_BOO);
++    gTasks[taskId].func = Task_CoopMessageWaitForA;
++}
++
++static void Task_CoopLinkup(u8 taskId)
++{
++    struct Task *task = &gTasks[taskId];
++    struct CoopSyncBlock *block;
++    struct CoopSyncBlock *blocks[COOP_NUM_PLAYERS];
++    s32 i;
++
++    if (task->tState >= LINKUP_CONFIRM && HasLinkErrorOccurred())
++    {
++        LinkupFailed(taskId, sText_LinkFailed);
++        return;
++    }
++
++    switch (task->tState)
++    {
++    case LINKUP_OPEN:
++        gLinkType = LINKTYPE_COOP;
++        OpenLinkTimed();
++        ResetLinkPlayerCount();
++        ResetLinkPlayers();
++        CoopScreen_Print(sText_Waiting);
++        task->tTimer = 0;
++        task->tState++;
++        break;
++    case LINKUP_WAIT_PLAYERS:
++        if (JOY_NEW(B_BUTTON))
++        {
++            CloseLink();
++            DestroyTask(taskId);
++            DoSoftReset();
++            return;
++        }
++        if (++task->tTimer >= 10 && GetLinkPlayerCount_2() >= 2)
++        {
++            task->tTimer = 0;
++            task->tState++;
++        }
++        break;
++    case LINKUP_CONFIRM:
++        if (++task->tTimer < 30)
++            break;
++        if (IsLinkMaster())
++        {
++            SaveLinkPlayers(GetLinkPlayerCount_2());
++            CheckShouldAdvanceLinkState();
++        }
++        task->tState++;
++        break;
++    case LINKUP_EXCHANGE:
++        switch (GetLinkPlayerDataExchangeStatusTimed(2, 2))
++        {
++        case EXCHANGE_COMPLETE:
++            gCoopLocalPlayer = (GetMultiplayerId() == 0) ? COOP_PLAYER_1 : COOP_PLAYER_2;
++            SaveLinkPlayers(GetLinkPlayerCount_2());
++            CoopScreen_Print(sText_Syncing);
++            task->tState++;
++            break;
++        case EXCHANGE_DIFF_SELECTIONS:
++        case EXCHANGE_PLAYER_NOT_READY:
++        case EXCHANGE_PARTNER_NOT_READY:
++        case EXCHANGE_WRONG_NUM_PLAYERS:
++            LinkupFailed(taskId, sText_LinkFailed);
++            break;
++        }
++        break;
++    case LINKUP_SEND_SYNC:
++        if (!IsLinkTaskFinished())
++            break;
++        block = (struct CoopSyncBlock *)gBlockSendBuffer;
++        block->magic = COOP_SYNC_MAGIC;
++        block->saveHash = HashSaveFlash();
++        block->rngSeed = gRngValue;
++        RtcGetInfo(&block->rtc);
++        block->startMode = sCoop.startMode;
++        block->saveFileStatus = gSaveFileStatus;
++        block->optionsButtonMode = gSaveBlock2Ptr->optionsButtonMode;
++        block->optionsTextSpeed = gSaveBlock2Ptr->optionsTextSpeed;
++        block->optionsWindowFrameType = gSaveBlock2Ptr->optionsWindowFrameType;
++        block->optionsSound = gSaveBlock2Ptr->optionsSound;
++        block->optionsBattleStyle = gSaveBlock2Ptr->optionsBattleStyle;
++        block->optionsBattleSceneOff = gSaveBlock2Ptr->optionsBattleSceneOff;
++        SendBlock(0, block, sizeof(*block));
++        task->tState++;
++        break;
++    case LINKUP_WAIT_SYNC:
++        if (GetBlockReceivedStatus() != GetLinkPlayerCountAsBitFlags())
++            break;
++        for (i = 0; i < COOP_NUM_PLAYERS; i++)
++            blocks[i] = (struct CoopSyncBlock *)gBlockRecvBuffer[i];
++        ResetBlockReceivedFlags();
++        if (blocks[0]->magic != COOP_SYNC_MAGIC || blocks[1]->magic != COOP_SYNC_MAGIC)
++        {
++            LinkupFailed(taskId, sText_LinkFailed);
++            break;
++        }
++        if (blocks[0]->startMode != blocks[1]->startMode)
++        {
++            LinkupFailed(taskId, sText_ModeMismatch);
++            break;
++        }
++        // Continuing needs the same save on both GBAs. A new game starts fresh.
++        if (blocks[0]->startMode == COOP_START_CONTINUE
++         && (blocks[0]->saveHash != blocks[1]->saveHash || blocks[0]->saveHash == 0))
++        {
++            LinkupFailed(taskId, sText_SaveMismatch);
++            break;
++        }
++        sCoop.newGameSettings = *blocks[0];
++        // Player 1's random seed and clock are used by both games.
++        sCoop.rngSeed = blocks[0]->rngSeed;
++        sCoop.baseRtc = blocks[0]->rtc;
++        task->tState++;
++        break;
++    case LINKUP_STANDBY:
++        SetLinkStandbyCallback();
++        task->tState++;
++        break;
++    case LINKUP_WAIT_STANDBY:
++        if (IsLinkTaskFinished())
++            task->tState++;
++        break;
++    case LINKUP_START:
++        // From here on, the game only advances when both players' buttons for the
++        // next frame have arrived (see CoopLink_BeginTick). The first frame both
++        // games simulate reloads the save, so both start from identical state.
++        sCoop.ticksEnded = 0;
++        sCoop.packetsSent = 0;
++        for (i = 0; i < COOP_NUM_PLAYERS; i++)
++        {
++            sCoop.keyFifoHead[i] = 0;
++            sCoop.keyFifoCount[i] = 0;
++        }
++        sCoop.soundSteps = 0;
++        gCoopTick = 0;
++        sCoop.playerKeys[0] = sCoop.playerKeys[1] = 0;
++        sCoop.prevPlayerKeys[0] = sCoop.prevPlayerKeys[1] = 0;
++        sCoop.virtualPrevHeld = 0;
++        sCoop.virtualRepeat = 0;
++        sCoop.hashPos = 0;
++        sCoop.sendHashTick = 0;
++        sCoop.sendHash = 0;
++        for (i = 0; i < HASH_HISTORY; i++)
++            sCoop.hashTicks[i] = 0xFFFF;
++        gCoopInputOwner = COOP_PLAYER_1;
++        gReceivedRemoteLinkPlayers = FALSE; // Menus shouldn't behave as if in a link room
++        gLinkCallback = LinkCB_CoopSendKeys;
++        gCoopLinkActive = TRUE;
++        DestroyTask(taskId);
++        SetMainCallback2(CB2_CoopFirstTick);
++        break;
++    }
++}
++
++#undef tState
++#undef tTimer
++
++static void Task_CoopMessageWaitForA(u8 taskId)
++{
++    if (JOY_NEW(A_BUTTON | B_BUTTON))
++    {
++        DestroyTask(taskId);
++        DoSoftReset();
++    }
++}
++
++static void ShowCoopErrorScreen(const u8 *text)
++{
++    gCoopLinkActive = FALSE;
++    CloseLink();
++    m4aMPlayAllStop();
++    CoopScreen_Init();
++    CoopScreen_Print(text);
++    CreateTask(Task_CoopMessageWaitForA, 0);
++}
++
++// First frame simulated in lockstep, run by both games on the same frame.
++// New game: both games start from a blank save with Player 1's options, then
++// Professor Birch's introduction begins (Player 1 answers it).
++static void StartCoopNewGame(void)
++{
++    u16 imeBackup = REG_IME;
++    const struct CoopSyncBlock *settings = &sCoop.newGameSettings;
++    u16 linkType = gLinkType;
++    struct CoopLinkState state = sCoop;
++
++    REG_IME = 0;
++    RegisterRamReset(RESET_EWRAM);
++    ClearGpuRegBits(REG_OFFSET_DISPCNT, DISPCNT_FORCED_BLANK);
++    REG_IME = imeBackup;
++    sCoop = state;
++    gLinkType = linkType;
++    CoopLink_RestoreLinkOpen();
++
++    gMain.inBattle = FALSE;
++    SetSaveBlocksPointers(GetSaveBlocksPointersBaseOffset());
++    ResetMenuAndMonGlobals();
++    Save_ResetSaveCounters();
++    Sav2_ClearSetDefault();
++    gSaveBlock2Ptr->optionsButtonMode = settings->optionsButtonMode;
++    gSaveBlock2Ptr->optionsTextSpeed = settings->optionsTextSpeed;
++    gSaveBlock2Ptr->optionsWindowFrameType = settings->optionsWindowFrameType;
++    gSaveBlock2Ptr->optionsSound = settings->optionsSound;
++    gSaveBlock2Ptr->optionsBattleStyle = settings->optionsBattleStyle;
++    gSaveBlock2Ptr->optionsBattleSceneOff = settings->optionsBattleSceneOff;
++    gSaveFileStatus = settings->saveFileStatus;
++    SetPokemonCryStereo(gSaveBlock2Ptr->optionsSound);
++    InitHeap(gHeap, HEAP_SIZE);
++    CoopLink_StartNewGameIntro();
++}
++
++static void CB2_CoopFirstTick(void)
++{
++    u16 linkType = gLinkType;
++    struct CoopLinkState state = sCoop;
++
++    if (sCoop.startMode == COOP_START_NEW_GAME)
++    {
++        gRngValue = sCoop.rngSeed;
++        gRng2Value = sCoop.rngSeed ^ 0x5A5A5A5A;
++        gMain.vblankCounter1 = 0;
++        gMain.vblankCounter2 = 0;
++        StartCoopNewGame();
++        return;
++    }
++
++    // Everything the game logic reads must start out the same on both GBAs.
++    gRngValue = sCoop.rngSeed;
++    gRng2Value = sCoop.rngSeed ^ 0x5A5A5A5A;
++    gMain.vblankCounter1 = 0;
++    gMain.vblankCounter2 = 0;
++    ReloadSave(); // Wipes EWRAM, reloads the save, then continues the game
++    sCoop = state;
++    gLinkType = linkType;
++    CoopLink_RestoreLinkOpen();
++}
++
++// ---------------------------------------------------------------------------
++// Lockstep
++// ---------------------------------------------------------------------------
++
++// Keeps other link callbacks from taking over. Packets are sent by SendKeys.
++static void LinkCB_CoopSendKeys(void)
++{
++}
++
++// Sends this GBA's buttons for one future frame.
++static void SendKeys(u16 keys)
++{
++    u16 cmd[CMD_LENGTH] = {0};
++
++    cmd[0] = LINKCMD_COOP_KEYS;
++    cmd[1] = keys;
++    cmd[2] = sCoop.sendHashTick;
++    cmd[3] = sCoop.sendHash & 0xFFFF;
++    cmd[4] = sCoop.sendHash >> 16;
++    CoopLink_SendPacket(cmd);
++    sCoop.packetsSent++;
++}
++
++// Files a received packet's buttons under each player. Both GBAs receive the
++// same packets, so both build the same lists.
++static bool8 ReceivePacket(u16 (*recv)[CMD_LENGTH])
++{
++    s32 i;
++
++    for (i = 0; i < COOP_NUM_PLAYERS; i++)
++    {
++        if (recv[i][0] != LINKCMD_COOP_KEYS)
++            continue;
++        if (sCoop.keyFifoCount[i] >= KEY_FIFO_SIZE)
++            return FALSE;
++        sCoop.keyFifo[i][(sCoop.keyFifoHead[i] + sCoop.keyFifoCount[i]) % KEY_FIFO_SIZE] = recv[i][1] & KEYS_MASK;
++        sCoop.keyFifoCount[i]++;
++        if (i != GetMultiplayerId())
++            CheckRemoteHash(recv[i][2], recv[i][3] | (recv[i][4] << 16));
++    }
++    return TRUE;
++}
++
++static u16 PopKeys(u8 player)
++{
++    u16 keys = sCoop.keyFifo[player][sCoop.keyFifoHead[player]];
++    sCoop.keyFifoHead[player] = (sCoop.keyFifoHead[player] + 1) % KEY_FIFO_SIZE;
++    sCoop.keyFifoCount[player]--;
++    return keys;
++}
++
++static bool8 IsFreeRoam(void)
++{
++    return gMain.callback2 == CB2_Overworld
++        && gMain.callback1 == CB1_Overworld
++        && !ArePlayerFieldControlsLocked();
++}
++
++static void ApplyVirtualKeys(u16 held)
++{
++    held &= KEYS_MASK;
++    gMain.newKeysRaw = held & ~sCoop.virtualPrevHeld;
++    gMain.newKeys = gMain.newKeysRaw;
++    gMain.newAndRepeatedKeys = gMain.newKeysRaw;
++    if (held != 0 && held == sCoop.virtualPrevHeld)
++    {
++        if (--sCoop.virtualRepeat == 0)
++        {
++            gMain.newAndRepeatedKeys = held;
++            sCoop.virtualRepeat = gKeyRepeatContinueDelay;
++        }
++    }
++    else
++    {
++        sCoop.virtualRepeat = gKeyRepeatStartDelay;
++    }
++    gMain.keyRepeatCounter = sCoop.virtualRepeat;
++    gMain.heldKeysRaw = held;
++    gMain.heldKeys = held;
++    if (gSaveBlock2Ptr->optionsButtonMode == OPTIONS_BUTTON_MODE_L_EQUALS_A)
++    {
++        if (JOY_NEW(L_BUTTON))
++            gMain.newKeys |= A_BUTTON;
++        if (JOY_HELD(L_BUTTON))
++            gMain.heldKeys |= A_BUTTON;
++    }
++    if (JOY_NEW(gMain.watchedKeysMask))
++        gMain.watchedKeysPressed = TRUE;
++    sCoop.virtualPrevHeld = held;
++}
++
++// Decides whose buttons drive the game this frame. Both GBAs compute the same
++// answer, since it only depends on the shared game state and both players' keys.
++//
++// - Walking around: Player 1's buttons move the main character (Player 2's
++//   character is moved by coop_player2.c). Player 2 can open the START menu,
++//   and then controls it until it closes.
++// - Battle choices (FIGHT/BAG/POKéMON/RUN, moves, targets, switching): the
++//   player who owns that Pokémon.
++// - Text (battle messages, dialogue boxes): either player can press A or B.
++// - Everything else: the last player in control (usually Player 1).
++static void UpdateVirtualInput(void)
++{
++    u16 new1 = sCoop.playerKeys[COOP_PLAYER_1] & ~sCoop.prevPlayerKeys[COOP_PLAYER_1];
++    u16 new2 = sCoop.playerKeys[COOP_PLAYER_2] & ~sCoop.prevPlayerKeys[COOP_PLAYER_2];
++    bool8 shared;
++
++    if (!gMain.inBattle)
++        sCoop.inBattlePrompt = FALSE;
++
++    if (IsFreeRoam())
++    {
++        gCoopInputOwner = COOP_PLAYER_1;
++        if ((new2 & START_BUTTON) && !(new1 & (START_BUTTON | SELECT_BUTTON | A_BUTTON)))
++        {
++            gCoopInputOwner = COOP_PLAYER_2;
++            ApplyVirtualKeys(START_BUTTON);
++            return;
++        }
++        ApplyVirtualKeys(sCoop.playerKeys[COOP_PLAYER_1]);
++        return;
++    }
++
++    if (gMain.inBattle)
++        shared = !sCoop.inBattlePrompt && gMain.callback2 == BattleMainCB2;
++    else
++        shared = gMain.callback2 == CB2_Overworld && !IsFieldMessageBoxHidden();
++
++    if (shared)
++        ApplyVirtualKeys(sCoop.playerKeys[gCoopInputOwner] | (sCoop.playerKeys[gCoopInputOwner ^ 1] & (A_BUTTON | B_BUTTON)));
++    else
++        ApplyVirtualKeys(sCoop.playerKeys[gCoopInputOwner]);
++}
++
++static void CheckRemoteHash(u16 tick, u32 hash)
++{
++    s32 i;
++
++    if (gCoopDesyncTick != 0 || tick == 0)
++        return;
++    for (i = 0; i < HASH_HISTORY; i++)
++    {
++        if (sCoop.hashTicks[i] == tick)
++        {
++            if (sCoop.hashValues[i] != hash)
++            {
++                gCoopDesyncTick = gCoopTick;
++#if COOP_DEBUG_DESYNC
++                gCoopDebugFreezeTick = tick + 64;
++#endif
++            }
++            return;
++        }
++    }
++}
++
++bool8 CoopLink_BeginTick(void)
++{
++    u16 recv[MAX_LINK_PLAYERS][CMD_LENGTH];
++    u16 localKeys = gMain.heldKeysRaw; // This GBA's real buttons, read this frame
++    s32 i;
++
++    sCoop.tickRan = FALSE;
++    if (gLinkErrorOccurred)
++    {
++        // The link broke. Leave lockstep so the link error screen can run.
++        gCoopLinkActive = FALSE;
++        return TRUE;
++    }
++    if (!CoopLink_IsLinkOpen() || !(gLinkStatus & LINK_STAT_CONN_ESTABLISHED))
++    {
++        ShowCoopErrorScreen(sText_LinkLost);
++        return TRUE;
++    }
++    gLinkCallback = LinkCB_CoopSendKeys; // Nothing else may take over the link
++
++    // Collect everything that arrived since last frame.
++    if (!(gLinkStatus & LINK_STAT_RECEIVED_NOTHING) && !ReceivePacket(gRecvCmds))
++    {
++        ShowCoopErrorScreen(sText_LinkLost);
++        return TRUE;
++    }
++    while (CoopLink_DequeueRecvPacket(recv))
++    {
++        if (!ReceivePacket(recv))
++        {
++            ShowCoopErrorScreen(sText_LinkLost);
++            return TRUE;
++        }
++    }
++
++    // Simulate a frame once both players' buttons for it are here. Otherwise
++    // wait (the other GBA is behind, e.g. still loading a map).
++#if COOP_DEBUG_DESYNC
++    if (gCoopDebugFreezeTick != 0 && gCoopTick >= gCoopDebugFreezeTick)
++        return FALSE; // Both games stop at the same frame so their memory can be compared
++#endif
++    if (sCoop.keyFifoCount[COOP_PLAYER_1] != 0 && sCoop.keyFifoCount[COOP_PLAYER_2] != 0)
++    {
++        // Graphics copies queued last frame are done by now on both GBAs.
++        FlushDma3Requests();
++        for (i = 0; i < COOP_NUM_PLAYERS; i++)
++        {
++            sCoop.prevPlayerKeys[i] = sCoop.playerKeys[i];
++            sCoop.playerKeys[i] = PopKeys(i);
++        }
++        UpdateVirtualInput();
++
++        // Things the original game advances once per screen refresh now advance
++        // once per simulated frame, so both games see the same values.
++        gMain.vblankCounter1++;
++        gMain.vblankCounter2++;
++        if (gTrainerHillVBlankCounter && *gTrainerHillVBlankCounter < 0xFFFFFFFF)
++            (*gTrainerHillVBlankCounter)++;
++        Random();
++        gCoopTick++;
++        sCoop.tickRan = TRUE;
++    }
++
++    // Stay INPUT_DELAY frames ahead: one packet per simulated frame.
++    if (sCoop.packetsSent < gCoopTick + INPUT_DELAY)
++        SendKeys(localKeys);
++
++    return sCoop.tickRan;
++}
++
++static u32 HashBytes(u32 hash, const void *data, u32 size)
++{
++    const u8 *bytes = data;
++    u32 i;
++
++    for (i = 0; i < size; i++)
++        hash = (hash ^ bytes[i]) * 16777619u;
++    return hash;
++}
++
++static u32 HashU32(u32 hash, u32 value)
++{
++    return HashBytes(hash, &value, sizeof(value));
++}
++
++// Hash of the game state that must be identical on both GBAs.
++static u32 ComputeStateHash(void)
++{
++    u32 hash = 2166136261u;
++    s32 i;
++
++    hash = HashU32(hash, gRngValue);
++    hash = HashU32(hash, (u32)gMain.callback1);
++    hash = HashU32(hash, (u32)gMain.callback2);
++    hash = HashBytes(hash, &gSaveBlock1Ptr->location, sizeof(gSaveBlock1Ptr->location));
++    hash = HashBytes(hash, &gSaveBlock1Ptr->pos, sizeof(gSaveBlock1Ptr->pos));
++    for (i = 0; i < OBJECT_EVENTS_COUNT; i++)
++    {
++        struct ObjectEvent *obj = &gObjectEvents[i];
++        if (!obj->active)
++            continue;
++        hash = HashU32(hash, i | (obj->localId << 8) | (obj->graphicsId << 16) | (obj->facingDirection << 24));
++        hash = HashBytes(hash, &obj->currentCoords, sizeof(obj->currentCoords));
++    }
++    hash = HashBytes(hash, gPlayerParty, sizeof(gPlayerParty));
++    if (gMain.inBattle)
++        hash = HashBytes(hash, gBattleMons, sizeof(gBattleMons));
++    return hash;
++}
++
++
++#if COOP_DEBUG_DESYNC
++// Desync debugging (see COOP_DEBUG_DESYNC): a hash of each part of the game
++// state for the last 128 frames. Compare gCoopDebugHistory between the two
++// GBAs after both stop at gCoopDebugFreezeTick to see what diverged first.
++EWRAM_DATA u32 gCoopDebugHistory[128][8] = {0};
++u32 CoopDebug_GetScriptInfo(void); // script.c
++
++static void RecordDebugHistory(void)
++{
++    u32 *h = gCoopDebugHistory[gCoopTick % 128];
++    u32 x;
++    s32 i;
++
++    h[0] = gCoopTick;
++    h[1] = gRngValue;
++    h[2] = (u32)gMain.callback2;
++    x = 2166136261u;
++    for (i = 0; i < NUM_TASKS; i++)
++        x = HashU32(x, gTasks[i].isActive ? (u32)gTasks[i].func : 0);
++    h[3] = x;
++    x = 2166136261u;
++    for (i = 0; i < NUM_TASKS; i++)
++    {
++        if (gTasks[i].isActive)
++            x = HashBytes(x, gTasks[i].data, sizeof(gTasks[i].data));
++    }
++    h[4] = x;
++    x = 2166136261u;
++    for (i = 0; i < OBJECT_EVENTS_COUNT; i++)
++        x = HashBytes(x, &gObjectEvents[i].currentCoords, sizeof(gObjectEvents[i].currentCoords));
++    h[5] = x;
++    h[6] = HashBytes(2166136261u, gPlayerParty, sizeof(gPlayerParty));
++    h[7] = CoopDebug_GetScriptInfo();
++}
++#endif
++
++void CoopLink_EndTick(void)
++{
++#if COOP_DEBUG_DESYNC
++    RecordDebugHistory();
++#endif
++    sCoop.ticksEnded++;
++    if (gCoopTick % HASH_INTERVAL == 0)
++    {
++        u32 hash = ComputeStateHash();
++        sCoop.hashTicks[sCoop.hashPos] = gCoopTick & 0xFFFF;
++        sCoop.hashValues[sCoop.hashPos] = hash;
++        sCoop.hashPos = (sCoop.hashPos + 1) % HASH_HISTORY;
++        sCoop.sendHashTick = gCoopTick & 0xFFFF;
++        sCoop.sendHash = hash;
++    }
++    if (gCoopDesyncTick != 0 && !sCoop.errorShown && !COOP_DEBUG_DESYNC)
++    {
++        sCoop.errorShown = TRUE;
++        ShowCoopErrorScreen(sText_Desync);
++    }
++}
++
++// A cable club feature tried to start its own link session (see CreateLinkupTask).
++void CoopLink_RefuseLinkup(void)
++{
++    gLinkType = LINKTYPE_COOP;
++    gSpecialVar_Result = LINKUP_FAILED;
++    ScriptContext_Enable();
++}
++
++bool8 CoopLink_TickRanThisFrame(void)
++{
++    return sCoop.tickRan;
++}
++
++// The sound engine advances exactly once between simulated frames, so scripts
++// that wait for a sound effect or music to finish behave the same on both GBAs.
++bool8 CoopLink_ShouldStepSound(void)
++{
++    if (sCoop.soundSteps < sCoop.ticksEnded)
++    {
++        sCoop.soundSteps = sCoop.ticksEnded;
++        return TRUE;
++    }
++    return FALSE;
++}
++
++u16 CoopLink_GetPlayerKeys(u8 player)
++{
++    return sCoop.playerKeys[player];
++}
++
++u16 CoopLink_GetPlayerNewKeys(u8 player)
++{
++    return sCoop.playerKeys[player] & ~sCoop.prevPlayerKeys[player];
++}
++
++void CoopLink_EndBattlePrompt(void)
++{
++    sCoop.inBattlePrompt = FALSE;
++}
++
++void CoopLink_SetInputOwnerForBattler(u8 battler)
++{
++    if (!gCoopLinkActive)
++        return;
++    sCoop.inBattlePrompt = TRUE;
++    if (GetBattlerSide(battler) != B_SIDE_PLAYER)
++        return;
++    gCoopInputOwner = GetMonCoopOwner(&gPlayerParty[gBattlerPartyIndexes[battler]]);
++}
++
++// ---------------------------------------------------------------------------
++// Shared clock: Player 1's clock at link-up, advanced by simulated frames.
++// ---------------------------------------------------------------------------
++
++static u8 ToBcd(u32 value)
++{
++    return ((value / 10) << 4) | (value % 10);
++}
++
++static u8 DaysInMonth(u32 year, u32 month)
++{
++    static const u8 sDays[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
++
++    if (month == 2 && IsLeapYear(year))
++        return 29;
++    return sDays[month - 1];
++}
++
++bool8 CoopLink_GetRtcInfo(struct SiiRtcInfo *rtc)
++{
++    u32 seconds, days;
++    u32 year, month, day;
++
++    if (!gCoopLinkActive)
++        return FALSE;
++
++    *rtc = sCoop.baseRtc;
++    seconds = ConvertBcdToBinary(sCoop.baseRtc.hour) * 3600
++            + ConvertBcdToBinary(sCoop.baseRtc.minute) * 60
++            + ConvertBcdToBinary(sCoop.baseRtc.second)
++            + gCoopTick / 60;
++    days = seconds / 86400;
++    seconds %= 86400;
++    rtc->hour = ToBcd(seconds / 3600);
++    rtc->minute = ToBcd((seconds / 60) % 60);
++    rtc->second = ToBcd(seconds % 60);
++
++    if (days != 0)
++    {
++        year = ConvertBcdToBinary(sCoop.baseRtc.year);
++        month = ConvertBcdToBinary(sCoop.baseRtc.month);
++        day = ConvertBcdToBinary(sCoop.baseRtc.day);
++        rtc->dayOfWeek = (sCoop.baseRtc.dayOfWeek + days) % 7;
++        if (month < 1 || month > 12)
++            month = 1;
++        while (days != 0)
++        {
++            days--;
++            if (++day > DaysInMonth(year, month))
++            {
++                day = 1;
++                if (++month > 12)
++                {
++                    month = 1;
++                    year = (year + 1) % 100;
++                }
++            }
++        }
++        rtc->year = ToBcd(year);
++        rtc->month = ToBcd(month);
++        rtc->day = ToBcd(day);
++    }
++    return TRUE;
++}
+diff --git a/src/coop_player2.c b/src/coop_player2.c
+new file mode 100644
+index 000000000..38ac6f531
+--- /dev/null
++++ b/src/coop_player2.c
+@@ -0,0 +1,455 @@
++#include "global.h"
++#include "coop.h"
++#include "coop_link.h"
++#include "event_data.h"
++#include "event_object_movement.h"
++#include "field_camera.h"
++#include "field_player_avatar.h"
++#include "fieldmap.h"
++#include "metatile_behavior.h"
++#include "script.h"
++#include "constants/songs.h"
++#include "overworld.h"
++#include "task.h"
++#include "sound.h"
++#include "field_screen_effect.h"
++#include "field_door.h"
++#include "constants/event_object_movement.h"
++#include "constants/event_objects.h"
++#include "constants/flags.h"
++
++// Linked co-op: Player 2's character in the overworld.
++//
++// Player 1 is the game's normal player character: it triggers doors, scripts,
++// wild encounters and trainers. Player 2 is an extra object event that walks
++// around with Player 2's buttons, within COOP_TETHER_X/Y tiles of Player 1.
++// While Player 1 surfs, bikes or dives, and right after map changes, Player 2
++// "rides along" (hidden on Player 1's tile) and hops off next to Player 1 as
++// soon as Player 1 is standing still on foot.
++//
++// Everything here runs inside the shared simulated frame and only reads state
++// that is identical on both GBAs, so both games move Player 2 the same way.
++
++#define abs(x) ((x) < 0 ? -(x) : (x))
++
++static struct ObjectEvent *GetPlayer1(void)
++{
++    return &gObjectEvents[gPlayerAvatar.objectEventId];
++}
++
++struct ObjectEvent *CoopP2_GetObject(void)
++{
++    s32 i;
++
++    if (!gCoopLinkActive)
++        return NULL;
++    for (i = 0; i < OBJECT_EVENTS_COUNT; i++)
++    {
++        if (gObjectEvents[i].active && gObjectEvents[i].localId == LOCALID_COOP_PLAYER2)
++            return &gObjectEvents[i];
++    }
++    return NULL;
++}
++
++bool8 CoopP2_IsObjectP2(const struct ObjectEvent *objectEvent)
++{
++    return gCoopLinkActive && objectEvent->localId == LOCALID_COOP_PLAYER2;
++}
++
++// TRUE while Player 2 walks around on their own (visible, not riding along).
++bool8 CoopP2_IsWalking(void)
++{
++    struct ObjectEvent *p2 = CoopP2_GetObject();
++    return p2 != NULL && !p2->invisible;
++}
++
++static bool8 MustRideAlong(void)
++{
++    return (gPlayerAvatar.flags & (PLAYER_AVATAR_FLAG_SURFING | PLAYER_AVATAR_FLAG_UNDERWATER
++                                 | PLAYER_AVATAR_FLAG_MACH_BIKE | PLAYER_AVATAR_FLAG_ACRO_BIKE)) != 0;
++}
++
++static bool8 IsWithinTether(s16 x, s16 y, s16 otherX, s16 otherY)
++{
++    return abs(x - otherX) <= COOP_TETHER_X && abs(y - otherY) <= COOP_TETHER_Y;
++}
++
++// Called before Player 1 walks onto (x, y).
++bool8 CoopP2_IsPlayer1MoveAllowed(s16 x, s16 y)
++{
++    struct ObjectEvent *p2 = CoopP2_GetObject();
++
++    if (p2 == NULL || p2->invisible)
++        return TRUE;
++    return IsWithinTether(x, y, p2->currentCoords.x, p2->currentCoords.y);
++}
++
++// The area around Player 2 where map objects should exist, in the same format
++// as the vanilla area around the camera (see TrySpawnObjectEvents).
++void CoopP2_GetViewBounds(s16 *left, s16 *right, s16 *top, s16 *bottom)
++{
++    struct ObjectEvent *p2 = CoopP2_GetObject();
++    s16 x, y;
++
++    if (p2 == NULL || p2->invisible)
++    {
++        x = gSaveBlock1Ptr->pos.x;
++        y = gSaveBlock1Ptr->pos.y;
++    }
++    else
++    {
++        x = p2->currentCoords.x - MAP_OFFSET;
++        y = p2->currentCoords.y - MAP_OFFSET;
++    }
++    *left = x - 2;
++    *right = x + MAP_OFFSET_W + 2;
++    *top = y;
++    *bottom = y + MAP_OFFSET_H + 2;
++}
++
++static bool8 IsAnyObjectAt(const struct ObjectEvent *self, s16 x, s16 y)
++{
++    s32 i;
++
++    for (i = 0; i < OBJECT_EVENTS_COUNT; i++)
++    {
++        const struct ObjectEvent *obj = &gObjectEvents[i];
++        if (!obj->active || obj == self)
++            continue;
++        if ((obj->currentCoords.x == x && obj->currentCoords.y == y)
++         || (obj->previousCoords.x == x && obj->previousCoords.y == y))
++            return TRUE;
++    }
++    return FALSE;
++}
++
++// Can Player 2 be placed on this tile when hopping off next to Player 1?
++static bool8 IsGoodSpotForP2(const struct ObjectEvent *p2, s16 x, s16 y, u8 elevation)
++{
++    u8 behavior, tileElevation;
++
++    if (MapGridGetCollisionAt(x, y) || GetMapBorderIdAt(x, y) == CONNECTION_INVALID)
++        return FALSE;
++    tileElevation = MapGridGetElevationAt(x, y);
++    if (tileElevation != 0 && tileElevation != 15 && elevation != 0 && elevation != 15 && tileElevation != elevation)
++        return FALSE;
++    behavior = MapGridGetMetatileBehaviorAt(x, y);
++    if (MetatileBehavior_IsSurfableWaterOrUnderwater(behavior)
++     || MetatileBehavior_IsDoor(behavior)
++     || MetatileBehavior_IsWarpDoor(behavior)
++     || MetatileBehavior_IsNonAnimDoor(behavior)
++     || MetatileBehavior_IsLadder(behavior)
++     || MetatileBehavior_IsEscalator(behavior)
++     || Coop_IsWarpTile(behavior))
++        return FALSE;
++    return !IsAnyObjectAt(p2, x, y);
++}
++
++static void RideAlong(struct ObjectEvent *p2)
++{
++    struct ObjectEvent *p1 = GetPlayer1();
++
++    if (p2->currentCoords.x != p1->currentCoords.x || p2->currentCoords.y != p1->currentCoords.y)
++        MoveObjectEventToMapCoords(p2, p1->currentCoords.x, p1->currentCoords.y);
++    p2->currentElevation = p1->currentElevation;
++    p2->previousElevation = p1->previousElevation;
++    p2->invisible = TRUE;
++}
++
++static u8 OppositeDirection(u8 dir)
++{
++    switch (dir)
++    {
++    case DIR_NORTH: return DIR_SOUTH;
++    case DIR_SOUTH: return DIR_NORTH;
++    case DIR_WEST:  return DIR_EAST;
++    default:        return DIR_WEST;
++    }
++}
++
++// Puts Player 2 on a free tile next to Player 1 (behind first), or keeps them
++// riding along if there's no room.
++static void PlaceP2NearP1(struct ObjectEvent *p2)
++{
++    struct ObjectEvent *p1 = GetPlayer1();
++    u8 facing = p1->facingDirection;
++    u8 dirs[4];
++    s32 i;
++
++    dirs[0] = OppositeDirection(facing);
++    dirs[1] = (facing == DIR_NORTH || facing == DIR_SOUTH) ? DIR_WEST : DIR_NORTH;
++    dirs[2] = OppositeDirection(dirs[1]);
++    dirs[3] = facing;
++
++    for (i = 0; i < 4; i++)
++    {
++        s16 x = p1->currentCoords.x;
++        s16 y = p1->currentCoords.y;
++        MoveCoords(dirs[i], &x, &y);
++        if (IsGoodSpotForP2(p2, x, y, p1->currentElevation))
++        {
++            MoveObjectEventToMapCoords(p2, x, y);
++            ObjectEventUpdateElevation(p2);
++            p2->invisible = FALSE;
++            ObjectEventTurn(p2, facing);
++            return;
++        }
++    }
++    RideAlong(p2);
++}
++
++static void SpawnP2(void)
++{
++    struct ObjectEvent *p1 = GetPlayer1();
++    u8 graphicsId = GetRivalAvatarGraphicsIdByStateIdAndGender(PLAYER_AVATAR_STATE_NORMAL, gSaveBlock2Ptr->playerGender ^ 1);
++    u8 objEventId = SpawnSpecialObjectEventParameterized(graphicsId, MOVEMENT_TYPE_PLAYER, LOCALID_COOP_PLAYER2,
++                                                          p1->currentCoords.x, p1->currentCoords.y, p1->currentElevation);
++
++    if (objEventId < OBJECT_EVENTS_COUNT)
++        RideAlong(&gObjectEvents[objEventId]); // Hops off once Player 1 stands still
++}
++
++// After a warp/map load: Player 2 arrives with Player 1.
++void CoopP2_OnMapLoad(void)
++{
++    if (gCoopLinkActive && CoopP2_GetObject() == NULL)
++        SpawnP2();
++}
++
++// After returning to the field (continue, end of battle, closing a menu).
++void CoopP2_EnsureSpawned(void)
++{
++    if (gCoopLinkActive && CoopP2_GetObject() == NULL)
++        SpawnP2();
++}
++
++static u8 GetDpadDirection(u16 keys)
++{
++    if (keys & DPAD_UP)
++        return DIR_NORTH;
++    if (keys & DPAD_DOWN)
++        return DIR_SOUTH;
++    if (keys & DPAD_LEFT)
++        return DIR_WEST;
++    if (keys & DPAD_RIGHT)
++        return DIR_EAST;
++    return DIR_NONE;
++}
++
++static void SpawnObjectsAroundP2(void)
++{
++    // Objects are positioned relative to the camera, so only do this while the
++    // camera isn't in the middle of scrolling. Player 1's camera movement also
++    // spawns objects around Player 2 (the spawn area covers both players).
++    if (gFieldCamera.x == 0 && gFieldCamera.y == 0)
++    {
++        TrySpawnObjectEvents(0, 0);
++        RemoveObjectEventsOutsideView();
++    }
++}
++
++static bool8 sP2Interacting; // The running script was started by Player 2
++static bool8 sP2Stepped;     // Player 2's current movement is a step (check for warps when it ends)
++
++// Player 2 walks through a door: open it, step in, close it, then both players warp.
++#define tState  data[0]
++#define tDoorTask data[1]
++#define tDoorX  data[2]
++#define tDoorY  data[3]
++
++static void Task_CoopP2DoorWarp(u8 taskId)
++{
++    struct Task *task = &gTasks[taskId];
++    struct ObjectEvent *p2 = CoopP2_GetObject();
++
++    switch (task->tState)
++    {
++    case 0:
++        FreezeObjectEvents();
++        PlaySE(GetDoorSoundEffect(task->tDoorX, task->tDoorY));
++        task->tDoorTask = FieldAnimateDoorOpen(task->tDoorX, task->tDoorY);
++        task->tState++;
++        break;
++    case 1:
++        if (task->tDoorTask < 0 || !gTasks[task->tDoorTask].isActive)
++        {
++            if (p2 != NULL)
++            {
++                ObjectEventClearHeldMovementIfActive(p2);
++                ObjectEventSetHeldMovement(p2, MOVEMENT_ACTION_WALK_NORMAL_UP);
++            }
++            task->tState++;
++        }
++        break;
++    case 2:
++        if (p2 == NULL || ObjectEventClearHeldMovementIfFinished(p2))
++        {
++            if (p2 != NULL)
++                p2->invisible = TRUE;
++            task->tDoorTask = FieldAnimateDoorClose(task->tDoorX, task->tDoorY);
++            task->tState++;
++        }
++        break;
++    case 3:
++        if (task->tDoorTask < 0 || !gTasks[task->tDoorTask].isActive)
++        {
++            DoWarp(); // Fades out and loads the destination with Player 1 at the door
++            DestroyTask(taskId);
++        }
++        break;
++    }
++}
++
++#undef tState
++#undef tDoorTask
++#undef tDoorX
++#undef tDoorY
++
++// Facing direction of the player who started the running script.
++u8 CoopP2_GetInteractingFacing(void)
++{
++    struct ObjectEvent *p2 = CoopP2_GetObject();
++
++    if (sP2Interacting && p2 != NULL)
++        return p2->facingDirection;
++    return GetPlayerFacingDirection();
++}
++
++// Player 2 pressed A: talk to whoever / use whatever is in front of them.
++static bool8 TryP2Interaction(struct ObjectEvent *p2)
++{
++    s16 x = p2->currentCoords.x;
++    s16 y = p2->currentCoords.y;
++    u8 dir = p2->facingDirection;
++
++    MoveCoords(dir, &x, &y);
++    if (!Coop_TryStartInteractionAt(x, y, p2->currentElevation, dir))
++        return FALSE;
++    sP2Interacting = TRUE;
++    gCoopInputOwner = COOP_PLAYER_2; // Player 2 answers this conversation
++    return TRUE;
++}
++
++static void TryStartP2Step(struct ObjectEvent *p2)
++{
++    struct ObjectEvent *p1 = GetPlayer1();
++    u16 keys = CoopLink_GetPlayerKeys(COOP_PLAYER_2);
++    u8 dir = GetDpadDirection(keys);
++    s16 x, y;
++
++    if (dir == DIR_NONE)
++        return;
++
++    // Exit mats and other arrow warps: pushing toward them takes both players out.
++    if (Coop_TryStepWarpAt(p2->currentCoords.x, p2->currentCoords.y, p2->currentElevation, dir, TRUE))
++        return;
++
++    x = p2->currentCoords.x;
++    y = p2->currentCoords.y;
++    MoveCoords(dir, &x, &y);
++
++    // Doors: Player 2 walks in and Player 1 comes along.
++    if (Coop_TrySetupDoorWarpAt(x, y, p2->currentElevation, dir))
++    {
++        u8 taskId = CreateTask(Task_CoopP2DoorWarp, 10);
++        gTasks[taskId].data[2] = x;
++        gTasks[taskId].data[3] = y;
++        LockPlayerFieldControls();
++        gFieldCallback = FieldCB_DefaultWarpExit;
++        return;
++    }
++
++    if (GetLedgeJumpDirection(x, y, dir) != DIR_NONE)
++    {
++        s16 landX = x, landY = y;
++        MoveCoords(dir, &landX, &landY);
++        if (IsWithinTether(landX, landY, p1->currentCoords.x, p1->currentCoords.y) && !IsAnyObjectAt(p2, landX, landY))
++        {
++            ObjectEventSetHeldMovement(p2, GetJump2MovementAction(dir));
++            sP2Stepped = TRUE;
++            SpawnObjectsAroundP2();
++            return;
++        }
++    }
++    else if (GetCollisionAtCoords(p2, x, y, dir) == COLLISION_NONE
++          && IsWithinTether(x, y, p1->currentCoords.x, p1->currentCoords.y)
++          && !MetatileBehavior_IsSurfableWaterOrUnderwater(MapGridGetMetatileBehaviorAt(x, y)))
++    {
++        if ((keys & B_BUTTON) && FlagGet(FLAG_SYS_B_DASH))
++            ObjectEventSetHeldMovement(p2, GetWalkFastMovementAction(dir));
++        else
++            ObjectEventSetHeldMovement(p2, GetWalkNormalMovementAction(dir));
++        sP2Stepped = TRUE;
++        SpawnObjectsAroundP2();
++        return;
++    }
++
++    // Blocked: just turn to face that way.
++    if (p2->facingDirection != dir)
++        ObjectEventSetHeldMovement(p2, GetFaceDirectionMovementAction(dir));
++}
++
++// Runs once per simulated frame in the overworld (CB1_Overworld).
++void CoopP2_Update(void)
++{
++    struct ObjectEvent *p1 = GetPlayer1();
++    struct ObjectEvent *p2;
++
++    if (!gCoopLinkActive)
++        return;
++
++    p2 = CoopP2_GetObject();
++    if (p2 == NULL)
++    {
++        CoopP2_EnsureSpawned();
++        return;
++    }
++
++    if (FuncIsActiveTask(Task_CoopP2DoorWarp))
++        return; // Walking through a door
++
++    if (MustRideAlong())
++    {
++        sP2Stepped = FALSE;
++        RideAlong(p2);
++        return;
++    }
++
++    if (p2->invisible)
++    {
++        sP2Stepped = FALSE;
++        // Riding along: hop off once Player 1 stands still with free controls.
++        if (!ArePlayerFieldControlsLocked() && gPlayerAvatar.tileTransitionState == T_NOT_MOVING)
++            PlaceP2NearP1(p2);
++        else
++            RideAlong(p2);
++        return;
++    }
++
++    // Still in the middle of a step?
++    if (ObjectEventIsHeldMovementActive(p2) && !ObjectEventClearHeldMovementIfFinished(p2))
++        return;
++
++    // Player 1 got moved too far away (cutscene, forced movement...): catch up.
++    if (!IsWithinTether(p2->currentCoords.x, p2->currentCoords.y, p1->currentCoords.x, p1->currentCoords.y))
++    {
++        PlaceP2NearP1(p2);
++        return;
++    }
++
++    if (ArePlayerFieldControlsLocked())
++        return; // Menus and cutscenes: Player 2 waits
++
++    // Just stepped onto stairs, a ladder, a cave entrance...: both players warp.
++    if (sP2Stepped)
++    {
++        sP2Stepped = FALSE;
++        if (Coop_TryStepWarpAt(p2->currentCoords.x, p2->currentCoords.y, p2->currentElevation, p2->facingDirection, FALSE))
++            return;
++    }
++
++    sP2Interacting = FALSE;
++    if ((CoopLink_GetPlayerNewKeys(COOP_PLAYER_2) & A_BUTTON) && TryP2Interaction(p2))
++        return;
++    TryStartP2Step(p2);
++}
+diff --git a/src/credits.c b/src/credits.c
+index 11e282572..e425b4446 100644
+--- a/src/credits.c
++++ b/src/credits.c
+@@ -714,7 +714,7 @@ static void ResetGpuAndVram(void)
+     SetGpuReg(REG_OFFSET_BLDALPHA, 0);
+     SetGpuReg(REG_OFFSET_BLDY, 0);
+ 
+-    DmaFill16(3, 0, (void *)VRAM, VRAM_SIZE);
++    DmaFillLarge16(3, 0, (void *)VRAM, VRAM_SIZE, 0x1000);
+     DmaFill32(3, 0, (void *)OAM, OAM_SIZE);
+     DmaFill16(3, 0, (void *)(PLTT + 2), PLTT_SIZE - 2);
+ }
+diff --git a/src/diploma.c b/src/diploma.c
+index 2f4cb4207..c7a572276 100644
+--- a/src/diploma.c
++++ b/src/diploma.c
+@@ -64,7 +64,7 @@ void CB2_ShowDiploma(void)
+     SetGpuReg(REG_OFFSET_BG0HOFS, 0);
+     SetGpuReg(REG_OFFSET_BG0VOFS, 0);
+     // why doesn't this one use the dma manager either?
+-    DmaFill16(3, 0, VRAM, VRAM_SIZE);
++    DmaFillLarge16(3, 0, (void *)VRAM, VRAM_SIZE, 0x1000);
+     DmaFill32(3, 0, OAM, OAM_SIZE);
+     DmaFill16(3, 0, PLTT, PLTT_SIZE);
+     ScanlineEffect_Stop();
+diff --git a/src/dma3_manager.c b/src/dma3_manager.c
+index d774efe8c..247ec9490 100644
+--- a/src/dma3_manager.c
++++ b/src/dma3_manager.c
+@@ -39,24 +39,22 @@ void ClearDma3Requests(void)
+     sDma3ManagerLocked = FALSE;
+ }
+ 
+-void ProcessDma3Requests(void)
++static void DoDma3Requests(bool32 limitToVBlank)
+ {
+-    u16 bytesTransferred;
+-
+-    if (sDma3ManagerLocked)
+-        return;
+-
+-    bytesTransferred = 0;
++    u32 bytesTransferred = 0;
+ 
+     // as long as there are DMA requests to process (unless size or vblank is an issue), do not exit
+     while (sDma3Requests[sDma3RequestCursor].size != 0)
+     {
+         bytesTransferred += sDma3Requests[sDma3RequestCursor].size;
+ 
+-        if (bytesTransferred > 40 * 1024)
+-            return; // don't transfer more than 40 KiB
+-        if (*(u8 *)REG_ADDR_VCOUNT > 224)
+-            return; // we're about to leave vblank, stop
++        if (limitToVBlank)
++        {
++            if (bytesTransferred > 40 * 1024)
++                return; // don't transfer more than 40 KiB
++            if (*(u8 *)REG_ADDR_VCOUNT > 224)
++                return; // we're about to leave vblank, stop
++        }
+ 
+         switch (sDma3Requests[sDma3RequestCursor].mode)
+         {
+@@ -95,6 +93,25 @@ void ProcessDma3Requests(void)
+     }
+ }
+ 
++void ProcessDma3Requests(void)
++{
++    if (sDma3ManagerLocked)
++        return;
++    DoDma3Requests(TRUE);
++}
++
++// Linked co-op: finishes every queued copy right away. Otherwise how many
++// screen refreshes a copy takes depends on timing, and code that waits for
++// copies to finish would run differently on the two GBAs.
++void FlushDma3Requests(void)
++{
++    if (sDma3ManagerLocked)
++        return;
++    sDma3ManagerLocked = TRUE; // Keeps the VBlank interrupt from processing them at the same time
++    DoDma3Requests(FALSE);
++    sDma3ManagerLocked = FALSE;
++}
++
+ s16 RequestDma3Copy(const void *src, void *dest, u16 size, u8 mode)
+ {
+     int cursor;
+diff --git a/src/egg_hatch.c b/src/egg_hatch.c
+index 8816d7ae6..38a6bbf72 100644
+--- a/src/egg_hatch.c
++++ b/src/egg_hatch.c
+@@ -369,7 +369,7 @@ static void AddHatchedMonToParty(u8 id)
+     SetMonData(mon, MON_DATA_IS_EGG, &isEgg);
+ 
+     species = GetMonData(mon, MON_DATA_SPECIES);
+-    GetSpeciesName(name, species);
++    GetSpeciesNamePadded(name, species);
+     SetMonData(mon, MON_DATA_NICKNAME, name);
+ 
+     species = SpeciesToNationalPokedexNum(species);
+diff --git a/src/event_object_movement.c b/src/event_object_movement.c
+index 02e1fced7..758296f32 100644
+--- a/src/event_object_movement.c
++++ b/src/event_object_movement.c
+@@ -1,4 +1,5 @@
+ #include "global.h"
++#include "coop_link.h"
+ #include "malloc.h"
+ #include "battle_pyramid.h"
+ #include "berry.h"
+@@ -1654,6 +1655,17 @@ void TrySpawnObjectEvents(s16 cameraX, s16 cameraY)
+         s16 top = gSaveBlock1Ptr->pos.y;
+         s16 bottom = gSaveBlock1Ptr->pos.y + MAP_OFFSET_H + 2;
+ 
++        // Linked co-op: also spawn objects around Player 2.
++        if (COOP_LINKED && gCoopLinkActive)
++        {
++            s16 left2, right2, top2, bottom2;
++            CoopP2_GetViewBounds(&left2, &right2, &top2, &bottom2);
++            left = min(left, left2);
++            right = max(right, right2);
++            top = min(top, top2);
++            bottom = max(bottom, bottom2);
++        }
++
+         if (CurrentBattlePyramidLocation() != PYRAMID_LOCATION_NONE)
+             objectCount = GetNumBattlePyramidObjectEvents();
+         else if (InTrainerHill())
+@@ -1703,6 +1715,19 @@ static void RemoveObjectEventIfOutsideView(struct ObjectEvent *objectEvent)
+     s16 top =    gSaveBlock1Ptr->pos.y;
+     s16 bottom = gSaveBlock1Ptr->pos.y + 16;
+ 
++    // Linked co-op: keep Player 2 and everything around Player 2.
++    if (COOP_LINKED && gCoopLinkActive)
++    {
++        s16 left2, right2, top2, bottom2;
++        if (CoopP2_IsObjectP2(objectEvent))
++            return;
++        CoopP2_GetViewBounds(&left2, &right2, &top2, &bottom2);
++        left = min(left, left2);
++        right = max(right, right2);
++        top = min(top, top2);
++        bottom = max(bottom, bottom2);
++    }
++
+     if (objectEvent->currentCoords.x >= left && objectEvent->currentCoords.x <= right
+      && objectEvent->currentCoords.y >= top && objectEvent->currentCoords.y <= bottom)
+         return;
+@@ -1776,7 +1801,7 @@ static void SpawnObjectEventOnReturnToField(u8 objectEventId, s16 x, s16 y)
+         sprite->x += 8;
+         sprite->y += 16 + sprite->centerToCornerVecY;
+         sprite->images = graphicsInfo->images;
+-        if (objectEvent->movementType == MOVEMENT_TYPE_PLAYER)
++        if (objectEvent->movementType == MOVEMENT_TYPE_PLAYER && !CoopP2_IsObjectP2(objectEvent)) // Linked co-op: Player 2 is not the player avatar
+         {
+             SetPlayerAvatarObjectEventIdAndObjectId(objectEventId, i);
+             objectEvent->warpArrowSpriteId = CreateWarpArrowSprite();
+@@ -1788,7 +1813,7 @@ static void SpawnObjectEventOnReturnToField(u8 objectEventId, s16 x, s16 y)
+         sprite->coordOffsetEnabled = TRUE;
+         sprite->sObjEventId = objectEventId;
+         objectEvent->spriteId = i;
+-        if (!objectEvent->inanimate && objectEvent->movementType != MOVEMENT_TYPE_PLAYER)
++        if (!objectEvent->inanimate && (objectEvent->movementType != MOVEMENT_TYPE_PLAYER || CoopP2_IsObjectP2(objectEvent)))
+             StartSpriteAnim(sprite, GetFaceDirectionAnimNum(objectEvent->facingDirection));
+ 
+         ResetObjectEventFldEffData(objectEvent);
+@@ -2368,7 +2393,14 @@ void SetObjectEventDirection(struct ObjectEvent *objectEvent, u8 direction)
+ 
+ static const u8 *GetObjectEventScriptPointerByLocalIdAndMap(u8 localId, u8 mapNum, u8 mapGroup)
+ {
+-    return GetObjectEventTemplateByLocalIdAndMap(localId, mapNum, mapGroup)->script;
++    const struct ObjectEventTemplate *obj = GetObjectEventTemplateByLocalIdAndMap(localId, mapNum, mapGroup);
++
++    // Objects without a template (like Player 2 in linked co-op) have no script.
++    // The original game would read from address 0, which gives different
++    // results on each GBA.
++    if (obj == NULL)
++        return NULL;
++    return obj->script;
+ }
+ 
+ const u8 *GetObjectEventScriptPointerByObjectEventId(u8 objectEventId)
+@@ -2379,11 +2411,10 @@ const u8 *GetObjectEventScriptPointerByObjectEventId(u8 objectEventId)
+ static u16 GetObjectEventFlagIdByLocalIdAndMap(u8 localId, u8 mapNum, u8 mapGroup)
+ {
+     const struct ObjectEventTemplate *obj = GetObjectEventTemplateByLocalIdAndMap(localId, mapNum, mapGroup);
+-#ifdef UBFIX
+     // BUG: The function may return NULL, and attempting to read from NULL may freeze the game using modern compilers.
++    // (Always checked: linked co-op needs this to read the same value on both GBAs.)
+     if (obj == NULL)
+         return 0;
+-#endif // UBFIX
+     return obj->flagId;
+ }
+ 
+diff --git a/src/field_camera.c b/src/field_camera.c
+index e76ba3d85..3b8672a0e 100644
+--- a/src/field_camera.c
++++ b/src/field_camera.c
+@@ -1,4 +1,6 @@
+ #include "global.h"
++#include "coop_link.h"
++#include "coop.h"
+ #include "berry.h"
+ #include "bike.h"
+ #include "field_camera.h"
+@@ -43,6 +45,74 @@ COMMON_DATA struct CameraObject gFieldCamera = {0};
+ COMMON_DATA u16 gTotalCameraPixelOffsetY = 0;
+ COMMON_DATA u16 gTotalCameraPixelOffsetX = 0;
+ 
++// Linked co-op: on Player 2's GBA the screen follows Player 2.
++//
++// The game logic (gSaveBlock1Ptr->pos, map connections, which objects exist)
++// still follows Player 1's camera on both GBAs. Player 2's GBA only changes what
++// is drawn: the BG tilemap ring buffer holds the area around Player 2, and the
++// BG scroll and sprite offsets are shifted by the pixel distance between the
++// two players. Every map tile always goes to the same buffer cell as in the
++// original game, so the two views share the same buffer layout.
++static bool8 sCoopViewOn;
++static s16 sCoopViewDeltaX;
++static s16 sCoopViewDeltaY;
++static s16 sCoopDrawnOriginX;
++static s16 sCoopDrawnOriginY;
++
++static bool8 IsCoopPlayer2Screen(void)
++{
++    return COOP_LINKED && gCoopLinkActive && gCoopLocalPlayer == COOP_PLAYER_2;
++}
++
++static struct ObjectEvent *GetCoopViewTarget(void)
++{
++    struct ObjectEvent *p2;
++    u8 player1SpriteId;
++
++    if (!IsCoopPlayer2Screen())
++        return NULL;
++    p2 = CoopP2_GetObject();
++    if (p2 == NULL || p2->invisible)
++        return NULL;
++    // Only while the camera follows Player 1 (cutscenes with their own camera
++    // show the shared view).
++    player1SpriteId = gObjectEvents[gPlayerAvatar.objectEventId].spriteId;
++    if (gFieldCamera.spriteId == 0 || gSprites[gFieldCamera.spriteId].sCamera_FollowSpriteId != player1SpriteId)
++        return NULL;
++    return p2;
++}
++
++// Top-left metatile of the area drawn into the BG buffers.
++static void GetCoopDrawOrigin(s16 *x, s16 *y)
++{
++    struct ObjectEvent *target = GetCoopViewTarget();
++
++    if (target != NULL)
++    {
++        *x = target->currentCoords.x - MAP_OFFSET;
++        *y = target->currentCoords.y - MAP_OFFSET;
++    }
++    else
++    {
++        *x = gSaveBlock1Ptr->pos.x;
++        *y = gSaveBlock1Ptr->pos.y;
++    }
++}
++
++// The buffer cell (in tiles, 0-31) that a map coordinate is drawn to.
++static u8 GetBufferCell(u8 tileOffset, s32 coord, s32 cameraCoord)
++{
++    s32 cell = (tileOffset + 2 * (coord - cameraCoord)) % 32;
++    if (cell < 0)
++        cell += 32;
++    return cell;
++}
++
++bool8 CoopView_IsLocalViewOffset(void)
++{
++    return sCoopViewOn;
++}
++
+ static void ResetCameraOffset(struct FieldCameraOffset *cameraOffset)
+ {
+     cameraOffset->xTileOffset = 0;
+@@ -77,6 +147,12 @@ void FieldUpdateBgTilemapScroll(void)
+     r5 = sFieldCameraOffset.xPixelOffset + sHorizontalCameraPan;
+     r4 = sVerticalCameraPan + sFieldCameraOffset.yPixelOffset + 8;
+ 
++    if (sCoopViewOn) // Linked co-op: Player 2's screen
++    {
++        r5 += sCoopViewDeltaX;
++        r4 += sCoopViewDeltaY;
++    }
++
+     SetGpuReg(REG_OFFSET_BG1HOFS, r5);
+     SetGpuReg(REG_OFFSET_BG1VOFS, r4);
+     SetGpuReg(REG_OFFSET_BG2HOFS, r5);
+@@ -89,11 +165,21 @@ void GetCameraOffsetWithPan(s16 *x, s16 *y)
+ {
+     *x = sFieldCameraOffset.xPixelOffset + sHorizontalCameraPan;
+     *y = sFieldCameraOffset.yPixelOffset + sVerticalCameraPan + 8;
++    if (sCoopViewOn)
++    {
++        *x += sCoopViewDeltaX;
++        *y += sCoopViewDeltaY;
++    }
+ }
+ 
+ void DrawWholeMapView(void)
+ {
+-    DrawWholeMapViewInternal(gSaveBlock1Ptr->pos.x, gSaveBlock1Ptr->pos.y, gMapHeader.mapLayout);
++    s16 x, y;
++
++    GetCoopDrawOrigin(&x, &y);
++    sCoopDrawnOriginX = x;
++    sCoopDrawnOriginY = y;
++    DrawWholeMapViewInternal(x, y, gMapHeader.mapLayout);
+     sFieldCameraOffset.copyBGToVRAM = TRUE;
+ }
+ 
+@@ -103,16 +189,20 @@ static void DrawWholeMapViewInternal(int x, int y, const struct MapLayout *mapLa
+     u8 j;
+     u32 r6;
+     u8 temp;
++    // In the original game x/y is always the camera position, so these are
++    // just the camera's tile offsets.
++    u8 baseX = GetBufferCell(sFieldCameraOffset.xTileOffset, x, gSaveBlock1Ptr->pos.x);
++    u8 baseY = GetBufferCell(sFieldCameraOffset.yTileOffset, y, gSaveBlock1Ptr->pos.y);
+ 
+     for (i = 0; i < 32; i += 2)
+     {
+-        temp = sFieldCameraOffset.yTileOffset + i;
++        temp = baseY + i;
+         if (temp >= 32)
+             temp -= 32;
+         r6 = temp * 32;
+         for (j = 0; j < 32; j += 2)
+         {
+-            temp = sFieldCameraOffset.xTileOffset + j;
++            temp = baseX + j;
+             if (temp >= 32)
+                 temp -= 32;
+             DrawMetatileAt(mapLayout, r6 + temp, x + j / 2, y + i / 2);
+@@ -120,6 +210,73 @@ static void DrawWholeMapViewInternal(int x, int y, const struct MapLayout *mapLa
+     }
+ }
+ 
++// Linked co-op: draws one map tile into its buffer cell.
++static void CoopDrawMapTile(s32 x, s32 y)
++{
++    u8 cellX = GetBufferCell(sFieldCameraOffset.xTileOffset, x, gSaveBlock1Ptr->pos.x);
++    u8 cellY = GetBufferCell(sFieldCameraOffset.yTileOffset, y, gSaveBlock1Ptr->pos.y);
++    DrawMetatileAt(gMapHeader.mapLayout, cellY * 32 + cellX, x, y);
++}
++
++// Linked co-op, Player 2's screen: keeps the BG buffer and scroll following
++// Player 2. Called every frame after the camera update.
++void CoopView_Update(void)
++{
++    struct ObjectEvent *target;
++    s16 x, y, dx, dy;
++    s32 i;
++
++    sCoopViewOn = FALSE;
++    if (!IsCoopPlayer2Screen())
++        return;
++
++    GetCoopDrawOrigin(&x, &y);
++    dx = x - sCoopDrawnOriginX;
++    dy = y - sCoopDrawnOriginY;
++    if (dx != 0 || dy != 0)
++    {
++        sCoopDrawnOriginX = x;
++        sCoopDrawnOriginY = y;
++        if ((dx == 0 || dy == 0) && dx >= -1 && dx <= 1 && dy >= -1 && dy <= 1)
++        {
++            // Same slices the original camera draws when it moves one tile.
++            for (i = 0; i < 16; i++)
++            {
++                if (dx > 0)
++                    CoopDrawMapTile(x + 14, y + i);
++                else if (dx < 0)
++                    CoopDrawMapTile(x, y + i);
++                else if (dy > 0)
++                    CoopDrawMapTile(x + i, y + 14);
++                else
++                    CoopDrawMapTile(x + i, y);
++            }
++        }
++        else
++        {
++            DrawWholeMapViewInternal(x, y, gMapHeader.mapLayout);
++        }
++        sFieldCameraOffset.copyBGToVRAM = TRUE;
++    }
++
++    target = GetCoopViewTarget();
++    if (target != NULL)
++    {
++        struct Sprite *p1Sprite = &gSprites[gObjectEvents[gPlayerAvatar.objectEventId].spriteId];
++        struct Sprite *p2Sprite = &gSprites[target->spriteId];
++        sCoopViewDeltaX = p2Sprite->x - p1Sprite->x;
++        sCoopViewDeltaY = p2Sprite->y - p1Sprite->y;
++        sCoopViewOn = TRUE;
++        gSpriteCoordOffsetX -= sCoopViewDeltaX;
++        gSpriteCoordOffsetY -= sCoopViewDeltaY;
++    }
++    else
++    {
++        sCoopViewDeltaX = 0;
++        sCoopViewDeltaY = 0;
++    }
++}
++
+ static void RedrawMapSlicesForCameraUpdate(struct FieldCameraOffset *cameraOffset, int x, int y)
+ {
+     const struct MapLayout *mapLayout = gMapHeader.mapLayout;
+@@ -225,7 +382,7 @@ void DrawDoorMetatileAt(int x, int y, u16 *tiles)
+ 
+ static void DrawMetatileAt(const struct MapLayout *mapLayout, u16 offset, int x, int y)
+ {
+-    u16 metatileId = MapGridGetMetatileIdAt(x, y);
++    u16 metatileId = IsCoopPlayer2Screen() ? MapGridGetMetatileIdAtForDrawing(x, y) : MapGridGetMetatileIdAt(x, y);
+     const u16 *metatiles;
+ 
+     if (metatileId > NUM_METATILES_TOTAL)
+@@ -311,6 +468,16 @@ static void DrawMetatile(s32 metatileLayerType, const u16 *tiles, u16 offset)
+ 
+ static s32 MapPosToBgTilemapOffset(struct FieldCameraOffset *cameraOffset, s32 x, s32 y)
+ {
++    if (IsCoopPlayer2Screen())
++    {
++        // Linked co-op: only tiles in the area currently drawn around Player 2.
++        if (x < sCoopDrawnOriginX || x >= sCoopDrawnOriginX + 16
++         || y < sCoopDrawnOriginY || y >= sCoopDrawnOriginY + 16)
++            return -1;
++        return GetBufferCell(cameraOffset->yTileOffset, y, gSaveBlock1Ptr->pos.y) * 32
++             + GetBufferCell(cameraOffset->xTileOffset, x, gSaveBlock1Ptr->pos.x);
++    }
++
+     x -= gSaveBlock1Ptr->pos.x;
+     x *= 2;
+     if (x >= 32 || x < 0)
+@@ -417,7 +584,20 @@ void CameraUpdate(void)
+         RotatingGatePuzzleCameraUpdate(deltaX, deltaY);
+         SetBerryTreesSeen();
+         AddCameraTileOffset(&sFieldCameraOffset, deltaX * 2, deltaY * 2);
+-        RedrawMapSlicesForCameraUpdate(&sFieldCameraOffset, deltaX * 2, deltaY * 2);
++        if (IsCoopPlayer2Screen())
++        {
++            // Linked co-op: CoopView_Update draws Player 2's area instead. When the
++            // camera crossed into a connected map, all coordinates were shifted.
++            if (gCamera.active)
++            {
++                sCoopDrawnOriginX -= gCamera.x;
++                sCoopDrawnOriginY -= gCamera.y;
++            }
++        }
++        else
++        {
++            RedrawMapSlicesForCameraUpdate(&sFieldCameraOffset, deltaX * 2, deltaY * 2);
++        }
+     }
+ 
+     AddCameraPixelOffset(&sFieldCameraOffset, movementSpeedX, movementSpeedY);
+@@ -460,6 +640,7 @@ void UpdateCameraPanning(void)
+     //Update sprite offset of overworld objects
+     gSpriteCoordOffsetX = gTotalCameraPixelOffsetX - sHorizontalCameraPan;
+     gSpriteCoordOffsetY = gTotalCameraPixelOffsetY - sVerticalCameraPan - 8;
++    CoopView_Update(); // Linked co-op: Player 2's screen follows Player 2
+ }
+ 
+ static void CameraPanningCB_PanAhead(void)
+diff --git a/src/field_control_avatar.c b/src/field_control_avatar.c
+index ed96a8772..148f92ad0 100644
+--- a/src/field_control_avatar.c
++++ b/src/field_control_avatar.c
+@@ -1,4 +1,5 @@
+ #include "global.h"
++#include "coop_link.h"
+ #include "battle_setup.h"
+ #include "bike.h"
+ #include "coord_event_weather.h"
+@@ -237,6 +238,89 @@ static bool8 TryStartInteractionScript(struct MapPosition *position, u16 metatil
+     return TRUE;
+ }
+ 
++// Linked co-op: Player 2 pressed A while facing (x, y). Same as Player 1
++// talking to someone, reading a sign or using a PC there (but no surfing).
++bool8 Coop_TryStartInteractionAt(s16 x, s16 y, u8 elevation, u8 direction)
++{
++    struct MapPosition position;
++    u8 metatileBehavior = MapGridGetMetatileBehaviorAt(x, y);
++    const u8 *script;
++
++    position.x = x;
++    position.y = y;
++    position.elevation = elevation;
++    script = GetInteractedObjectEventScript(&position, metatileBehavior, direction);
++    if (script == NULL)
++        script = GetInteractedBackgroundEventScript(&position, metatileBehavior, direction);
++    if (script == NULL)
++        script = GetInteractedMetatileScript(&position, metatileBehavior, direction);
++    if (script == NULL)
++        return FALSE;
++    if (script != EventScript_PC)
++        PlaySE(SE_SELECT);
++    ScriptContext_SetupScript(script);
++    return TRUE;
++}
++
++// Linked co-op: Player 2 walks into a door at (x, y) (facing north). Sets up
++// the warp so both players go through; the caller animates the door.
++bool8 Coop_TrySetupDoorWarpAt(s16 x, s16 y, u8 elevation, u8 direction)
++{
++    struct MapPosition position;
++    u8 metatileBehavior = MapGridGetMetatileBehaviorAt(x, y);
++    s8 warpEventId;
++
++    if (direction != DIR_NORTH || !MetatileBehavior_IsWarpDoor(metatileBehavior))
++        return FALSE;
++    position.x = x;
++    position.y = y;
++    position.elevation = elevation;
++    warpEventId = GetWarpEventAtMapPosition(&gMapHeader, &position);
++    if (warpEventId == WARP_ID_NONE)
++        return FALSE;
++    StoreInitialPlayerAvatarState();
++    SetupWarp(&gMapHeader, warpEventId, &position);
++    return TRUE;
++}
++
++// Linked co-op: Player 2 is standing on (x, y). With arrow = TRUE, Player 2 is
++// pushing toward an arrow warp (exit mats); otherwise Player 2 just stepped onto
++// a warp tile (stairs, ladders, cave entrances...). Both players warp.
++bool8 Coop_TryStepWarpAt(s16 x, s16 y, u8 elevation, u8 direction, bool8 arrow)
++{
++    struct MapPosition position;
++    u8 metatileBehavior = MapGridGetMetatileBehaviorAt(x, y);
++    s8 warpEventId;
++
++    if (arrow)
++    {
++        if (!IsArrowWarpMetatileBehavior(metatileBehavior, direction))
++            return FALSE;
++    }
++    else
++    {
++        if (!IsWarpMetatileBehavior(metatileBehavior)
++         || MetatileBehavior_IsMtPyreHole(metatileBehavior)
++         || MetatileBehavior_IsUnionRoomWarp(metatileBehavior))
++            return FALSE;
++    }
++    position.x = x;
++    position.y = y;
++    position.elevation = elevation;
++    warpEventId = GetWarpEventAtMapPosition(&gMapHeader, &position);
++    if (warpEventId == WARP_ID_NONE)
++        return FALSE;
++    StoreInitialPlayerAvatarState();
++    SetupWarp(&gMapHeader, warpEventId, &position);
++    DoWarp();
++    return TRUE;
++}
++
++bool8 Coop_IsWarpTile(u8 metatileBehavior)
++{
++    return IsWarpMetatileBehavior(metatileBehavior);
++}
++
+ static const u8 *GetInteractionScript(struct MapPosition *position, u8 metatileBehavior, u8 direction)
+ {
+     const u8 *script = GetInteractedObjectEventScript(position, metatileBehavior, direction);
+@@ -299,6 +383,8 @@ static const u8 *GetInteractedObjectEventScript(struct MapPosition *position, u8
+         if (objectEventId == OBJECT_EVENTS_COUNT || gObjectEvents[objectEventId].localId == LOCALID_PLAYER)
+             return NULL;
+     }
++    if (CoopP2_IsObjectP2(&gObjectEvents[objectEventId]))
++        return NULL; // Linked co-op: nothing happens when talking to Player 2
+ 
+     gSelectedObjectEvent = objectEventId;
+     gSpecialVar_LastTalked = gObjectEvents[objectEventId].localId;
+diff --git a/src/field_player_avatar.c b/src/field_player_avatar.c
+index 5b22ff74c..861011cf7 100644
+--- a/src/field_player_avatar.c
++++ b/src/field_player_avatar.c
+@@ -1,4 +1,5 @@
+ #include "global.h"
++#include "coop_link.h"
+ #include "main.h"
+ #include "bike.h"
+ #include "event_data.h"
+@@ -609,6 +610,21 @@ static void PlayerNotOnBikeMoving(u8 direction, u16 heldKeys)
+ {
+     u8 collision = CheckForPlayerAvatarCollision(direction);
+ 
++    // Linked co-op: don't walk (or jump) too far away from Player 2.
++    if (COOP_LINKED && gCoopLinkActive && (collision == COLLISION_NONE || collision == COLLISION_LEDGE_JUMP))
++    {
++        s16 x = gObjectEvents[gPlayerAvatar.objectEventId].currentCoords.x;
++        s16 y = gObjectEvents[gPlayerAvatar.objectEventId].currentCoords.y;
++        MoveCoords(direction, &x, &y);
++        if (collision == COLLISION_LEDGE_JUMP)
++            MoveCoords(direction, &x, &y);
++        if (!CoopP2_IsPlayer1MoveAllowed(x, y))
++        {
++            PlayerNotOnBikeCollide(direction);
++            return;
++        }
++    }
++
+     if (collision)
+     {
+         if (collision == COLLISION_LEDGE_JUMP)
+diff --git a/src/fieldmap.c b/src/fieldmap.c
+index 258947a03..9da21adf6 100644
+--- a/src/fieldmap.c
++++ b/src/fieldmap.c
+@@ -563,6 +563,57 @@ s32 GetPostCameraMoveMapBorderId(s32 x, s32 y)
+     return GetMapBorderIdAt(gSaveBlock1Ptr->pos.x + MAP_OFFSET + x, gSaveBlock1Ptr->pos.y + MAP_OFFSET + y);
+ }
+ 
++// Linked co-op: Player 2's screen can show more of the neighbouring maps than
++// the loaded area (which only holds MAP_OFFSET tiles of each connected map).
++// Reads those tiles straight from the connected map. Only used for drawing.
++u32 MapGridGetMetatileIdAtForDrawing(s32 x, s32 y)
++{
++    s32 i, count, cx, cy, width, height;
++    const struct MapConnection *connection;
++
++    if (AreCoordsWithinMapGridBounds(x, y) || gMapHeader.connections == NULL)
++        return MapGridGetMetatileIdAt(x, y);
++
++    width = gMapHeader.mapLayout->width;
++    height = gMapHeader.mapLayout->height;
++    count = gMapHeader.connections->count;
++    connection = gMapHeader.connections->connections;
++    for (i = 0; i < count; i++, connection++)
++    {
++        const struct MapHeader *cMap = GetMapHeaderFromConnection(connection);
++        s32 cWidth, cHeight;
++
++        if (cMap == NULL)
++            continue;
++        cWidth = cMap->mapLayout->width;
++        cHeight = cMap->mapLayout->height;
++        switch (connection->direction)
++        {
++        case CONNECTION_SOUTH:
++            cx = x - (connection->offset + MAP_OFFSET);
++            cy = y - (height + MAP_OFFSET);
++            break;
++        case CONNECTION_NORTH:
++            cx = x - (connection->offset + MAP_OFFSET);
++            cy = y - (MAP_OFFSET - cHeight);
++            break;
++        case CONNECTION_WEST:
++            cx = x - (MAP_OFFSET - cWidth);
++            cy = y - (connection->offset + MAP_OFFSET);
++            break;
++        case CONNECTION_EAST:
++            cx = x - (width + MAP_OFFSET);
++            cy = y - (connection->offset + MAP_OFFSET);
++            break;
++        default:
++            continue;
++        }
++        if (cx >= 0 && cx < cWidth && cy >= 0 && cy < cHeight)
++            return UNPACK_METATILE(cMap->mapLayout->map[cx + cWidth * cy]);
++    }
++    return MapGridGetMetatileIdAt(x, y);
++}
++
+ bool32 CanCameraMoveInDirection(s32 direction)
+ {
+     s32 x, y;
+diff --git a/src/fldeff_flash.c b/src/fldeff_flash.c
+index 3cf81c82c..7f2d2c0cf 100644
+--- a/src/fldeff_flash.c
++++ b/src/fldeff_flash.c
+@@ -133,7 +133,8 @@ void CB2_DoChangeMap(void)
+     SetGpuReg(REG_OFFSET_BG1VOFS, 0);
+     SetGpuReg(REG_OFFSET_BG0HOFS, 0);
+     SetGpuReg(REG_OFFSET_BG0VOFS, 0);
+-    DmaFill16(3, 0, (void *)VRAM, VRAM_SIZE);
++    // Cleared in small chunks so link cable interrupts are not blocked for long (linked co-op)
++    DmaFillLarge16(3, 0, (void *)VRAM, VRAM_SIZE, 0x1000);
+     DmaFill32(3, 0, (void *)OAM, OAM_SIZE);
+     DmaFill16(3, 0, (void *)(PLTT + 2), PLTT_SIZE - 2);
+     ResetPaletteFade();
+diff --git a/src/link.c b/src/link.c
+index 8a04b649f..b9a2b8a7a 100644
+--- a/src/link.c
++++ b/src/link.c
+@@ -1,4 +1,5 @@
+ #include "global.h"
++#include "coop_link.h"
+ #include "m4a.h"
+ #include "malloc.h"
+ #include "reload_save.h"
+@@ -236,6 +237,11 @@ static const u8 sUnusedData[] = {0x00, 0xFF, 0xFE, 0xFF, 0x00};
+ 
+ bool8 IsWirelessAdapterConnected(void)
+ {
++#if COOP_LINKED
++    // Linked co-op uses the cable; the wireless features are off.
++    if (gCoopLinkActive)
++        return FALSE;
++#endif
+     SetWirelessCommType1();
+     InitRFUAPI();
+     if (rfu_LMAN_REQBN_softReset_and_checkID() == RFU_ID)
+@@ -368,6 +374,13 @@ void OpenLink(void)
+ {
+     int i;
+ 
++#if COOP_LINKED
++    // Linked co-op keeps its own link open. Features that would reopen it
++    // (union room, cable club, record mixing...) must not reset it.
++    if (gCoopLinkActive)
++        return;
++#endif
++
+     if (!gWirelessCommType)
+     {
+         ResetSerial();
+@@ -399,6 +412,10 @@ void OpenLink(void)
+ 
+ void CloseLink(void)
+ {
++#if COOP_LINKED
++    if (gCoopLinkActive)
++        return;
++#endif
+     gReceivedRemoteLinkPlayers = FALSE;
+     if (gWirelessCommType)
+         LinkRfu_Shutdown();
+@@ -1808,8 +1825,40 @@ bool8 HandleLinkConnection(void)
+     return FALSE;
+ }
+ 
++// Linked co-op: the session starts by reloading the save, which clears EWRAM
++// (including sLinkOpen). Keeps the open link working afterwards.
++void CoopLink_RestoreLinkOpen(void)
++{
++    sLinkOpen = TRUE;
++}
++
++bool8 CoopLink_IsLinkOpen(void)
++{
++    return sLinkOpen;
++}
++
++// Linked co-op: takes the next received packet, if any (the normal link code
++// only hands over one per frame).
++bool8 CoopLink_DequeueRecvPacket(u16 (*recvCmds)[CMD_LENGTH])
++{
++    if (gLink.recvQueue.count == 0)
++        return FALSE;
++    DequeueRecvCmds(recvCmds);
++    return TRUE;
++}
++
++// Linked co-op: queues a packet to be sent at the next screen refresh.
++void CoopLink_SendPacket(u16 *sendCmd)
++{
++    EnqueueSendCmd(sendCmd);
++}
++
+ void SetWirelessCommType1(void)
+ {
++#if COOP_LINKED
++    if (gCoopLinkActive)
++        return;
++#endif
+     if (gReceivedRemoteLinkPlayers == 0)
+         gWirelessCommType = 1;
+ }
+diff --git a/src/load_save.c b/src/load_save.c
+index 117ba3e27..b424d8748 100644
+--- a/src/load_save.c
++++ b/src/load_save.c
+@@ -1,4 +1,5 @@
+ #include "global.h"
++#include "coop_link.h"
+ #include "malloc.h"
+ #include "berry_powder.h"
+ #include "item.h"
+@@ -182,7 +183,14 @@ void SaveObjectEvents(void)
+     int i;
+ 
+     for (i = 0; i < OBJECT_EVENTS_COUNT; i++)
++    {
+         gSaveBlock1Ptr->objectEvents[i] = gObjectEvents[i];
++        // Linked co-op: Player 2's character isn't part of the save, and the
++        // off-screen flag depends on which GBA's screen it's drawn on.
++        gSaveBlock1Ptr->objectEvents[i].offScreen = FALSE;
++        if (CoopP2_IsObjectP2(&gObjectEvents[i]))
++            gSaveBlock1Ptr->objectEvents[i].active = FALSE;
++    }
+ }
+ 
+ void LoadObjectEvents(void)
+diff --git a/src/main.c b/src/main.c
+index 2a47ec51a..014c69a6b 100644
+--- a/src/main.c
++++ b/src/main.c
+@@ -1,4 +1,5 @@
+ #include "global.h"
++#include "coop_link.h"
+ #include "crt0.h"
+ #include "malloc.h"
+ #include "link.h"
+@@ -162,8 +163,11 @@ void AgbMain(void)
+             }
+         }
+ 
+-        PlayTimeCounter_Update();
+-        MapMusicMain();
++        if (!gCoopLinkActive || CoopLink_TickRanThisFrame())
++        {
++            PlayTimeCounter_Update();
++            MapMusicMain();
++        }
+         WaitForVBlank();
+     }
+ }
+@@ -171,7 +175,22 @@ void AgbMain(void)
+ static void UpdateLinkAndCallCallbacks(void)
+ {
+     if (!HandleLinkConnection())
++    {
++#if COOP_LINKED
++        // Linked co-op: only simulate a frame once both players' buttons arrived.
++        if (gCoopLinkActive)
++        {
++            if (CoopLink_BeginTick())
++            {
++                CallCallbacks();
++                if (gCoopLinkActive)
++                    CoopLink_EndTick();
++            }
++            return;
++        }
++#endif
+         CallCallbacks();
++    }
+ }
+ 
+ static void InitMainCallbacks(void)
+@@ -208,6 +227,11 @@ void StartTimer1(void)
+ void SeedRngAndSetTrainerId(void)
+ {
+     u16 val = REG_TM1CNT_L;
++
++    // Linked co-op: a hardware timer differs between the GBAs; use the shared
++    // random numbers instead so both games pick the same trainer ID.
++    if (gCoopLinkActive)
++        val = Random();
+     SeedRng(val);
+     REG_TM1CNT_H = 0;
+     sTrainerId = val;
+@@ -344,25 +368,31 @@ static void VBlankIntr(void)
+     else if (gLinkVSyncDisabled == FALSE)
+         LinkVSync();
+ 
+-    gMain.vblankCounter1++;
++    // In linked co-op these advance once per simulated frame instead (see CoopLink_BeginTick).
++    if (!gCoopLinkActive)
++    {
++        gMain.vblankCounter1++;
+ 
+-    if (gTrainerHillVBlankCounter && *gTrainerHillVBlankCounter < 0xFFFFFFFF)
+-        (*gTrainerHillVBlankCounter)++;
++        if (gTrainerHillVBlankCounter && *gTrainerHillVBlankCounter < 0xFFFFFFFF)
++            (*gTrainerHillVBlankCounter)++;
++    }
+ 
+     if (gMain.vblankCallback)
+         gMain.vblankCallback();
+ 
+-    gMain.vblankCounter2++;
++    if (!gCoopLinkActive)
++        gMain.vblankCounter2++;
+ 
+     CopyBufferedValuesToGpuRegs();
+     ProcessDma3Requests();
+ 
+     gPcmDmaCounter = gSoundInfo.pcmDmaCounter;
+ 
+-    m4aSoundMain();
++    if (!gCoopLinkActive || CoopLink_ShouldStepSound())
++        m4aSoundMain();
+     TryReceiveLinkBattleData();
+ 
+-    if (!gMain.inBattle || !(gBattleTypeFlags & (BATTLE_TYPE_LINK | BATTLE_TYPE_FRONTIER | BATTLE_TYPE_RECORDED)))
++    if (!gCoopLinkActive && (!gMain.inBattle || !(gBattleTypeFlags & (BATTLE_TYPE_LINK | BATTLE_TYPE_FRONTIER | BATTLE_TYPE_RECORDED))))
+         Random();
+ 
+     UpdateWirelessStatusIndicatorSprite();
+diff --git a/src/main_menu.c b/src/main_menu.c
+index 45fa12cfc..e5d726025 100644
+--- a/src/main_menu.c
++++ b/src/main_menu.c
+@@ -1,4 +1,5 @@
+ #include "global.h"
++#include "coop_link.h"
+ #include "trainer_pokemon_sprites.h"
+ #include "bg.h"
+ #include "constants/rgb.h"
+@@ -554,6 +555,8 @@ void CB2_ReinitMainMenu(void)
+     InitMainMenu(TRUE);
+ }
+ 
++static bool8 sCoopNewGame;
++
+ static u32 InitMainMenu(bool8 returningFromOptionsMenu)
+ {
+     SetVBlankCallback(NULL);
+@@ -569,7 +572,7 @@ static u32 InitMainMenu(bool8 returningFromOptionsMenu)
+     SetGpuReg(REG_OFFSET_BG0HOFS, 0);
+     SetGpuReg(REG_OFFSET_BG0VOFS, 0);
+ 
+-    DmaFill16(3, 0, (void *)VRAM, VRAM_SIZE);
++    DmaFillLarge16(3, 0, (void *)VRAM, VRAM_SIZE, 0x1000); // Chunked: keeps the link cable interrupt responsive
+     DmaFill32(3, 0, (void *)OAM, OAM_SIZE);
+     DmaFill16(3, 0, (void *)(PLTT + 2), PLTT_SIZE - 2);
+ 
+@@ -608,11 +611,23 @@ static u32 InitMainMenu(bool8 returningFromOptionsMenu)
+     SetGpuReg(REG_OFFSET_DISPCNT, DISPCNT_WIN0_ON | DISPCNT_OBJ_ON | DISPCNT_OBJ_1D_MAP);
+     ShowBg(0);
+     HideBg(1);
+-    CreateTask(Task_MainMenuCheckSaveFile, 0);
++    if (!sCoopNewGame)
++        CreateTask(Task_MainMenuCheckSaveFile, 0);
+ 
+     return 0;
+ }
+ 
++// Linked co-op: starts Professor Birch's introduction directly, on both GBAs.
++void CoopLink_StartNewGameIntro(void)
++{
++    sCoopNewGame = TRUE;
++    InitMainMenu(FALSE);
++    sCoopNewGame = FALSE;
++    gPlttBufferUnfaded[0] = RGB_BLACK;
++    gPlttBufferFaded[0] = RGB_BLACK;
++    CreateTask(Task_NewGameBirchSpeech_Init, 0);
++}
++
+ #define tMenuType data[0]
+ #define tCurrItem data[1]
+ #define tItemCount data[12]
+@@ -885,6 +900,19 @@ static bool8 HandleMainMenuInput(u8 taskId)
+ {
+     s16 *data = gTasks[taskId].data;
+ 
++    // Linked co-op: this game is always played linked, so CONTINUE and NEW GAME
++    // (A or SELECT) open the co-op link-up on both GBAs.
++    if (COOP_LINKED && JOY_NEW(A_BUTTON | SELECT_BUTTON)
++     && ((tMenuType != HAS_NO_SAVED_GAME && tCurrItem <= 1) || (tMenuType == HAS_NO_SAVED_GAME && tCurrItem == 0)))
++    {
++        u8 startMode = (tMenuType != HAS_NO_SAVED_GAME && tCurrItem == 0) ? COOP_START_CONTINUE : COOP_START_NEW_GAME;
++        PlaySE(SE_SELECT);
++        if (tMenuType == HAS_MYSTERY_EVENTS)
++            RemoveScrollIndicatorArrowPair(tScrollArrowTaskId);
++        DestroyTask(taskId);
++        CoopLink_StartFromMainMenu(startMode);
++        return FALSE;
++    }
+     if (JOY_NEW(A_BUTTON))
+     {
+         PlaySE(SE_SELECT);
+@@ -1805,7 +1833,7 @@ static void CB2_NewGameBirchSpeech_ReturnFromNamingScreen(void)
+     SetGpuReg(REG_OFFSET_BG1VOFS, 0);
+     SetGpuReg(REG_OFFSET_BG0HOFS, 0);
+     SetGpuReg(REG_OFFSET_BG0VOFS, 0);
+-    DmaFill16(3, 0, VRAM, VRAM_SIZE);
++    DmaFillLarge16(3, 0, (void *)VRAM, VRAM_SIZE, 0x1000); // Chunked: keeps the link cable interrupt responsive
+     DmaFill32(3, 0, OAM, OAM_SIZE);
+     DmaFill16(3, 0, PLTT, PLTT_SIZE);
+     ResetPaletteFade();
+diff --git a/src/overworld.c b/src/overworld.c
+index 1d6b81c1f..2552257ad 100644
+--- a/src/overworld.c
++++ b/src/overworld.c
+@@ -1,4 +1,5 @@
+ #include "global.h"
++#include "coop_link.h"
+ #include "overworld.h"
+ #include "battle_pyramid.h"
+ #include "battle_setup.h"
+@@ -1459,7 +1460,11 @@ static void DoCB1_Overworld(u16 newKeys, u16 heldKeys)
+ void CB1_Overworld(void)
+ {
+     if (gMain.callback2 == CB2_Overworld)
++    {
+         DoCB1_Overworld(gMain.newKeys, gMain.heldKeys);
++        if (COOP_LINKED && gCoopLinkActive)
++            CoopP2_Update(); // Linked co-op: Player 2's character
++    }
+ }
+ 
+ static void OverworldBasic(void)
+@@ -1755,7 +1760,8 @@ void CB2_ContinueSavedGame(void)
+ 
+ static void FieldClearVBlankHBlankCallbacks(void)
+ {
+-    if (UsedPokemonCenterWarp() == TRUE)
++    // (Ends Cable Club sessions when going back downstairs. Linked co-op keeps its link.)
++    if (UsedPokemonCenterWarp() == TRUE && !gCoopLinkActive)
+         CloseLink();
+ 
+     if (gWirelessCommType != 0)
+@@ -2174,12 +2180,14 @@ static void InitObjectEventsLocal(void)
+     SetPlayerAvatarTransitionFlags(player->transitionFlags);
+     ResetInitialPlayerAvatarState();
+     TrySpawnObjectEvents(0, 0);
++    CoopP2_OnMapLoad(); // Linked co-op: Player 2 arrives with Player 1
+     TryRunOnWarpIntoMapScript();
+ }
+ 
+ static void InitObjectEventsReturnToField(void)
+ {
+     SpawnObjectEventsOnReturnToField(0, 0);
++    CoopP2_EnsureSpawned(); // Linked co-op
+     RotatingGate_InitPuzzleAndGraphics();
+     RunOnReturnToFieldMapScript();
+ }
+diff --git a/src/party_menu.c b/src/party_menu.c
+index 1b230592d..b6e452946 100755
+--- a/src/party_menu.c
++++ b/src/party_menu.c
+@@ -1,4 +1,5 @@
+ #include "global.h"
++#include "coop.h"
+ #include "malloc.h"
+ #include "battle.h"
+ #include "battle_anim.h"
+@@ -527,6 +528,17 @@ static void InitPartyMenu(u8 menuType, u8 layout, u8 partyAction, bool8 keepCurs
+             gPartyMenu.slotId = 0;
+ 
+         gTextFlags.autoScroll = 0;
++        // Co-op: show the party like in a co-op battle. Both players' leads on
++        // the left (Player 1 on top), the rest of each team on the right.
++        if (!gMain.inBattle && menuType != PARTY_MENU_TYPE_MULTI_SHOWCASE)
++        {
++            Coop_NormalizeParty();
++            if (gPartyMenu.layout == PARTY_LAYOUT_SINGLE
++             && menuType != PARTY_MENU_TYPE_CHOOSE_HALF
++             && menuType != PARTY_MENU_TYPE_MINIGAME
++             && Coop_BothTeamsInParty())
++                gPartyMenu.layout = PARTY_LAYOUT_DOUBLE;
++        }
+         CalculatePlayerPartyCount();
+         SetMainCallback2(CB2_InitPartyMenu);
+     }
+@@ -1190,6 +1202,15 @@ static bool8 PartyBoxPal_ParnterOrDisqualifiedInArena(u8 slot)
+     if (gPartyMenu.layout == PARTY_LAYOUT_MULTI && (slot == 1 || slot == 4 || slot == 5))
+         return TRUE;
+ 
++    // Co-op: Player 2's Pokémon use the alternate (partner) box color.
++    if (COOP_ENABLED
++     && gPartyMenu.layout != PARTY_LAYOUT_MULTI
++     && gPartyMenu.layout != PARTY_LAYOUT_MULTI_SHOWCASE
++     && slot < PARTY_SIZE
++     && GetMonData(&gPlayerParty[slot], MON_DATA_SPECIES) != SPECIES_NONE
++     && GetMonCoopOwner(&gPlayerParty[slot]) == COOP_PLAYER_2)
++        return TRUE;
++
+     if (slot < MULTI_PARTY_SIZE && (gBattleTypeFlags & BATTLE_TYPE_ARENA) && gMain.inBattle && (gBattleStruct->arenaLostPlayerMons >> GetPartyIdFromBattleSlot(slot) & 1))
+         return TRUE;
+ 
+@@ -3028,6 +3049,9 @@ static void SwitchPartyMon(void)
+     *mon1 = *mon2;
+     *mon2 = *monBuffer;
+     Free(monBuffer);
++    // Co-op: team membership stays with the slot, so switching a Pokémon into
++    // the other player's group hands it over to that player.
++    Coop_SwapOwners(mon1, mon2);
+     SwitchMenuBoxSprites(&menuBoxes[0]->pokeballSpriteId, &menuBoxes[1]->pokeballSpriteId);
+     SwitchMenuBoxSprites(&menuBoxes[0]->itemSpriteId, &menuBoxes[1]->itemSpriteId);
+     SwitchMenuBoxSprites(&menuBoxes[0]->monSpriteId, &menuBoxes[1]->monSpriteId);
+@@ -5810,6 +5834,13 @@ static bool8 TrySwitchInPokemon(void)
+         StringExpandPlaceholders(gStringVar4, gText_CantSwitchWithAlly);
+         return FALSE;
+     }
++    // Co-op: each player can only send out their own Pokémon
++    if (!Coop_IsMonUsableByBattler(gBattlerInMenuId, &gPlayerParty[slot]))
++    {
++        GetMonNickname(&gPlayerParty[slot], gStringVar1);
++        StringExpandPlaceholders(gStringVar4, gText_CoopNotYourMon);
++        return FALSE;
++    }
+     if (GetMonData(&gPlayerParty[slot], MON_DATA_HP) == 0)
+     {
+         GetMonNickname(&gPlayerParty[slot], gStringVar1);
+diff --git a/src/pokemon.c b/src/pokemon.c
+index 4b5c19714..914d16a3a 100644
+--- a/src/pokemon.c
++++ b/src/pokemon.c
+@@ -1,4 +1,5 @@
+ #include "global.h"
++#include "coop.h"
+ #include "malloc.h"
+ #include "apprentice.h"
+ #include "battle.h"
+@@ -2247,7 +2248,7 @@ void CreateBoxMon(struct BoxPokemon *boxMon, u16 species, u8 level, u8 fixedIV,
+     checksum = CalculateBoxMonChecksum(boxMon);
+     SetBoxMonData(boxMon, MON_DATA_CHECKSUM, &checksum);
+     EncryptBoxMon(boxMon);
+-    GetSpeciesName(speciesName, species);
++    GetSpeciesNamePadded(speciesName, species);
+     SetBoxMonData(boxMon, MON_DATA_NICKNAME, speciesName);
+     SetBoxMonData(boxMon, MON_DATA_LANGUAGE, &gGameLanguage);
+     SetBoxMonData(boxMon, MON_DATA_OT_NAME, gSaveBlock2Ptr->playerName);
+@@ -4439,6 +4440,12 @@ u8 GiveMonToPlayer(struct Pokemon *mon)
+     if (i >= PARTY_SIZE)
+         return CopyMonToPC(mon);
+ 
++    // Co-op: the new Pokémon joins whichever player still has room (Player 1 first).
++    if (COOP_ENABLED)
++        SetMonCoopOwner(mon, Coop_GetOwnerForNewMon());
++
++    // Not sorted here: scripts expect a new Pokémon to be in the last slot
++    // (e.g. for nicknaming). The party menu and battles regroup the teams.
+     CopyMon(&gPlayerParty[i], mon, sizeof(*mon));
+     gPlayerPartyCount = i + 1;
+     return MON_GIVEN_TO_PARTY;
+@@ -4629,6 +4636,18 @@ bool8 IsPokemonStorageFull(void)
+     return TRUE;
+ }
+ 
++// Same, but the whole name buffer (POKEMON_NAME_LENGTH + 1) is filled, with
++// EOS after the name. For names stored in Pokémon: otherwise the unused bytes
++// keep whatever was on the stack, which differs between linked co-op GBAs.
++void GetSpeciesNamePadded(u8 *name, u16 species)
++{
++    s32 i;
++
++    for (i = 0; i <= POKEMON_NAME_LENGTH; i++)
++        name[i] = EOS;
++    GetSpeciesName(name, species);
++}
++
+ void GetSpeciesName(u8 *name, u16 species)
+ {
+     s32 i;
+diff --git a/src/rtc.c b/src/rtc.c
+index 54c176dba..b4aa07737 100644
+--- a/src/rtc.c
++++ b/src/rtc.c
+@@ -1,4 +1,5 @@
+ #include "global.h"
++#include "coop_link.h"
+ #include "rtc.h"
+ #include "string_util.h"
+ #include "text.h"
+@@ -125,6 +126,9 @@ u16 RtcGetErrorStatus(void)
+ 
+ void RtcGetInfo(struct SiiRtcInfo *rtc)
+ {
++    // Linked co-op: both games use Player 1's clock, advanced by simulated frames.
++    if (CoopLink_GetRtcInfo(rtc))
++        return;
+     if (sErrorStatus & RTC_ERR_FLAG_MASK)
+         *rtc = sRtcDummy;
+     else
+diff --git a/src/save_failed_screen.c b/src/save_failed_screen.c
+index c4f30defb..677b6c8d8 100644
+--- a/src/save_failed_screen.c
++++ b/src/save_failed_screen.c
+@@ -193,7 +193,7 @@ static void CB2_SaveFailedScreen(void)
+         SetGpuReg(REG_OFFSET_BG1VOFS, 0);
+         SetGpuReg(REG_OFFSET_BG0HOFS, 0);
+         SetGpuReg(REG_OFFSET_BG0VOFS, 0);
+-        DmaFill16(3, 0, VRAM, VRAM_SIZE);
++        DmaFillLarge16(3, 0, (void *)VRAM, VRAM_SIZE, 0x1000); // Chunked: keeps the link cable interrupt responsive
+         DmaFill32(3, 0, OAM, OAM_SIZE);
+         DmaFill16(3, 0, PLTT, PLTT_SIZE);
+         LZ77UnCompVram(gBirchBagGrass_Gfx, (void *)VRAM);
+diff --git a/src/scrcmd.c b/src/scrcmd.c
+index 9c75a625c..6bb63ac5d 100644
+--- a/src/scrcmd.c
++++ b/src/scrcmd.c
+@@ -1,4 +1,5 @@
+ #include "global.h"
++#include "coop_link.h"
+ #include "frontier_util.h"
+ #include "battle_setup.h"
+ #include "berry.h"
+@@ -1153,7 +1154,7 @@ bool8 ScrCmd_resetobjectsubpriority(struct ScriptContext *ctx)
+ bool8 ScrCmd_faceplayer(struct ScriptContext *ctx)
+ {
+     if (gObjectEvents[gSelectedObjectEvent].active)
+-        ObjectEventFaceOppositeDirection(&gObjectEvents[gSelectedObjectEvent], GetPlayerFacingDirection());
++        ObjectEventFaceOppositeDirection(&gObjectEvents[gSelectedObjectEvent], CoopP2_GetInteractingFacing()); // Linked co-op: whoever talked to it
+     return FALSE;
+ }
+ 
+diff --git a/src/script.c b/src/script.c
+index a953ff1e7..04cf1e2d6 100644
+--- a/src/script.c
++++ b/src/script.c
+@@ -1,4 +1,5 @@
+ #include "global.h"
++#include "coop_link.h"
+ #include "script.h"
+ #include "event_data.h"
+ #include "mystery_gift.h"
+@@ -468,3 +469,11 @@ void InitRamScript_NoObjectEvent(u8 *script, u16 scriptSize)
+         scriptSize = sizeof(gSaveBlock1Ptr->ramScript.data.script);
+     InitRamScript(script, scriptSize, MAP_GROUP(MAP_UNDEFINED), MAP_NUM(MAP_UNDEFINED), NO_OBJECT);
+ }
++
++#if COOP_DEBUG_DESYNC
++// Linked co-op desync debugging (see coop_link.c).
++u32 CoopDebug_GetScriptInfo(void)
++{
++    return (u32)sGlobalScriptContext.scriptPtr ^ (sGlobalScriptContextStatus << 28);
++}
++#endif
+diff --git a/src/script_menu.c b/src/script_menu.c
+index e923f4031..1ac2c1ebe 100644
+--- a/src/script_menu.c
++++ b/src/script_menu.c
+@@ -325,6 +325,9 @@ bool16 ScriptMenu_CreatePCMultichoice(void)
+     }
+ }
+ 
++static const u8 sText_CoopTeams[] = _("CO-OP TEAMS");
++
++// Co-op: adds CO-OP TEAMS as the third option (see EventScript_AccessPC).
+ static void CreatePCMultichoice(void)
+ {
+     u8 x = 8;
+@@ -332,12 +335,14 @@ static void CreatePCMultichoice(void)
+     u8 width;
+     u8 numChoices;
+     u8 windowId;
++    u8 y;
+     int i;
+ 
+     for (i = 0; i < ARRAY_COUNT(sPCNameStrings); i++)
+     {
+         pixelWidth = DisplayTextAndGetWidth(sPCNameStrings[i], pixelWidth);
+     }
++    pixelWidth = DisplayTextAndGetWidth(sText_CoopTeams, pixelWidth);
+ 
+     if (FlagGet(FLAG_SYS_GAME_CLEAR))
+     {
+@@ -347,21 +352,17 @@ static void CreatePCMultichoice(void)
+     width = ConvertPixelWidthToTileWidth(pixelWidth);
+ 
+     // Include Hall of Fame option if player is champion
++    numChoices = FlagGet(FLAG_SYS_GAME_CLEAR) ? 5 : 4;
++    windowId = CreateWindowFromRect(0, 0, width, numChoices * 2);
++    SetStandardWindowBorderStyle(windowId, FALSE);
++    AddTextPrinterParameterized(windowId, FONT_NORMAL, sText_CoopTeams, x, 33, TEXT_SKIP_DRAW, NULL);
++    y = 49;
+     if (FlagGet(FLAG_SYS_GAME_CLEAR))
+     {
+-        numChoices = 4;
+-        windowId = CreateWindowFromRect(0, 0, width, 8);
+-        SetStandardWindowBorderStyle(windowId, FALSE);
+-        AddTextPrinterParameterized(windowId, FONT_NORMAL, gText_HallOfFame, x, 33, TEXT_SKIP_DRAW, NULL);
+-        AddTextPrinterParameterized(windowId, FONT_NORMAL, gText_LogOff, x, 49, TEXT_SKIP_DRAW, NULL);
+-    }
+-    else
+-    {
+-        numChoices = 3;
+-        windowId = CreateWindowFromRect(0, 0, width, 6);
+-        SetStandardWindowBorderStyle(windowId, FALSE);
+-        AddTextPrinterParameterized(windowId, FONT_NORMAL, gText_LogOff, x, 33, TEXT_SKIP_DRAW, NULL);
++        AddTextPrinterParameterized(windowId, FONT_NORMAL, gText_HallOfFame, x, y, TEXT_SKIP_DRAW, NULL);
++        y += 16;
+     }
++    AddTextPrinterParameterized(windowId, FONT_NORMAL, gText_LogOff, x, y, TEXT_SKIP_DRAW, NULL);
+ 
+     // Change PC name if player has met Lanette
+     if (FlagGet(FLAG_SYS_PC_LANETTE))
+diff --git a/src/starter_choose.c b/src/starter_choose.c
+index aad10dd5a..412b313ed 100644
+--- a/src/starter_choose.c
++++ b/src/starter_choose.c
+@@ -1,4 +1,5 @@
+ #include "global.h"
++#include "coop.h"
+ #include "bg.h"
+ #include "data.h"
+ #include "decompress.h"
+@@ -393,7 +394,7 @@ void CB2_ChooseStarter(void)
+     ChangeBgX(3, 0, BG_COORD_SET);
+     ChangeBgY(3, 0, BG_COORD_SET);
+ 
+-    DmaFill16(3, 0, VRAM, VRAM_SIZE);
++    DmaFillLarge16(3, 0, (void *)VRAM, VRAM_SIZE, 0x1000); // Chunked: keeps the link cable interrupt responsive
+     DmaFill32(3, 0, OAM, OAM_SIZE);
+     DmaFill16(3, 0, PLTT, PLTT_SIZE);
+ 
+@@ -471,11 +472,14 @@ static void CB2_StarterChoose(void)
+     UpdatePaletteFade();
+ }
+ 
++static const u8 sText_CoopPlayer2Starter[] = _("Player 2, choose your POKéMON\nand help out too!");
++
+ static void Task_StarterChoose(u8 taskId)
+ {
+     CreateStarterPokemonLabel(gTasks[taskId].tStarterSelection);
+     DrawStdFrameWithCustomTileAndPalette(0, FALSE, 0x2A8, 0xD);
+-    AddTextPrinterParameterized(0, FONT_NORMAL, gText_BirchInTrouble, 0, 1, 0, NULL);
++    // Co-op: Player 2 picks a starter right after Player 1.
++    AddTextPrinterParameterized(0, FONT_NORMAL, gCoopChoosingPlayer2Starter ? sText_CoopPlayer2Starter : gText_BirchInTrouble, 0, 1, 0, NULL);
+     PutWindowTilemap(0);
+     ScheduleBgCopyTilemapToVram(0);
+     gTasks[taskId].func = Task_HandleStarterChooseInput;
+diff --git a/src/title_screen.c b/src/title_screen.c
+index 118e5775b..5ee51f0ea 100644
+--- a/src/title_screen.c
++++ b/src/title_screen.c
+@@ -588,7 +588,7 @@ void CB2_InitTitleScreen(void)
+         SetGpuReg(REG_OFFSET_BG1VOFS, 0);
+         SetGpuReg(REG_OFFSET_BG0HOFS, 0);
+         SetGpuReg(REG_OFFSET_BG0VOFS, 0);
+-        DmaFill16(3, 0, (void *)VRAM, VRAM_SIZE);
++        DmaFillLarge16(3, 0, (void *)VRAM, VRAM_SIZE, 0x1000); // Chunked: keeps the link cable interrupt responsive
+         DmaFill32(3, 0, (void *)OAM, OAM_SIZE);
+         DmaFill16(3, 0, (void *)(PLTT + 2), PLTT_SIZE - 2);
+         ResetPaletteFade();
+diff --git a/src/union_room.c b/src/union_room.c
+index cd94cf23b..5ee148dec 100644
+--- a/src/union_room.c
++++ b/src/union_room.c
+@@ -1,4 +1,5 @@
+ #include "global.h"
++#include "coop_link.h"
+ #include "malloc.h"
+ #include "battle.h"
+ #include "berry_crush.h"
+@@ -3295,6 +3296,12 @@ void InitUnionRoom(void)
+ {
+     struct WirelessLink_URoom *data;
+ 
++#if COOP_LINKED
++    // Runs in every Pokémon Center to look for wireless players. Off in linked co-op.
++    if (gCoopLinkActive)
++        return;
++#endif
++
+     sUnionRoomPlayerName[0] = EOS;
+     CreateTask(Task_InitUnionRoom, 0);
+     sWirelessLinkMain.uRoom = sWirelessLinkMain.uRoom; // Needed to match.

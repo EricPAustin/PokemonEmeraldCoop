@@ -1,0 +1,250 @@
+diff --git a/include/coop_link.h b/include/coop_link.h
+index a99f2b497..28511adfb 100644
+--- a/include/coop_link.h
++++ b/include/coop_link.h
+@@ -61,6 +61,9 @@ void CoopP2_GetViewBounds(s16 *left, s16 *right, s16 *top, s16 *bottom);
+ bool8 CoopP2_IsObjectP2(const struct ObjectEvent *objectEvent);
+ u8 CoopP2_GetInteractingFacing(void);
+ bool8 Coop_TryStartInteractionAt(s16 x, s16 y, u8 elevation, u8 direction); // field_control_avatar.c
++bool8 Coop_TrySetupDoorWarpAt(s16 x, s16 y, u8 elevation, u8 direction);
++bool8 Coop_TryStepWarpAt(s16 x, s16 y, u8 elevation, u8 direction, bool8 arrow);
++bool8 Coop_IsWarpTile(u8 metatileBehavior);
+ 
+ // Player 2's camera (field_camera.c)
+ bool8 CoopView_IsLocalViewOffset(void);
+diff --git a/src/coop_player2.c b/src/coop_player2.c
+index 10d4a0437..38ac6f531 100644
+--- a/src/coop_player2.c
++++ b/src/coop_player2.c
+@@ -8,6 +8,12 @@
+ #include "fieldmap.h"
+ #include "metatile_behavior.h"
+ #include "script.h"
++#include "constants/songs.h"
++#include "overworld.h"
++#include "task.h"
++#include "sound.h"
++#include "field_screen_effect.h"
++#include "field_door.h"
+ #include "constants/event_object_movement.h"
+ #include "constants/event_objects.h"
+ #include "constants/flags.h"
+@@ -133,7 +139,8 @@ static bool8 IsGoodSpotForP2(const struct ObjectEvent *p2, s16 x, s16 y, u8 elev
+      || MetatileBehavior_IsWarpDoor(behavior)
+      || MetatileBehavior_IsNonAnimDoor(behavior)
+      || MetatileBehavior_IsLadder(behavior)
+-     || MetatileBehavior_IsEscalator(behavior))
++     || MetatileBehavior_IsEscalator(behavior)
++     || Coop_IsWarpTile(behavior))
+         return FALSE;
+     return !IsAnyObjectAt(p2, x, y);
+ }
+@@ -242,6 +249,61 @@ static void SpawnObjectsAroundP2(void)
+ }
+ 
+ static bool8 sP2Interacting; // The running script was started by Player 2
++static bool8 sP2Stepped;     // Player 2's current movement is a step (check for warps when it ends)
++
++// Player 2 walks through a door: open it, step in, close it, then both players warp.
++#define tState  data[0]
++#define tDoorTask data[1]
++#define tDoorX  data[2]
++#define tDoorY  data[3]
++
++static void Task_CoopP2DoorWarp(u8 taskId)
++{
++    struct Task *task = &gTasks[taskId];
++    struct ObjectEvent *p2 = CoopP2_GetObject();
++
++    switch (task->tState)
++    {
++    case 0:
++        FreezeObjectEvents();
++        PlaySE(GetDoorSoundEffect(task->tDoorX, task->tDoorY));
++        task->tDoorTask = FieldAnimateDoorOpen(task->tDoorX, task->tDoorY);
++        task->tState++;
++        break;
++    case 1:
++        if (task->tDoorTask < 0 || !gTasks[task->tDoorTask].isActive)
++        {
++            if (p2 != NULL)
++            {
++                ObjectEventClearHeldMovementIfActive(p2);
++                ObjectEventSetHeldMovement(p2, MOVEMENT_ACTION_WALK_NORMAL_UP);
++            }
++            task->tState++;
++        }
++        break;
++    case 2:
++        if (p2 == NULL || ObjectEventClearHeldMovementIfFinished(p2))
++        {
++            if (p2 != NULL)
++                p2->invisible = TRUE;
++            task->tDoorTask = FieldAnimateDoorClose(task->tDoorX, task->tDoorY);
++            task->tState++;
++        }
++        break;
++    case 3:
++        if (task->tDoorTask < 0 || !gTasks[task->tDoorTask].isActive)
++        {
++            DoWarp(); // Fades out and loads the destination with Player 1 at the door
++            DestroyTask(taskId);
++        }
++        break;
++    }
++}
++
++#undef tState
++#undef tDoorTask
++#undef tDoorX
++#undef tDoorY
+ 
+ // Facing direction of the player who started the running script.
+ u8 CoopP2_GetInteractingFacing(void)
+@@ -278,10 +340,25 @@ static void TryStartP2Step(struct ObjectEvent *p2)
+     if (dir == DIR_NONE)
+         return;
+ 
++    // Exit mats and other arrow warps: pushing toward them takes both players out.
++    if (Coop_TryStepWarpAt(p2->currentCoords.x, p2->currentCoords.y, p2->currentElevation, dir, TRUE))
++        return;
++
+     x = p2->currentCoords.x;
+     y = p2->currentCoords.y;
+     MoveCoords(dir, &x, &y);
+ 
++    // Doors: Player 2 walks in and Player 1 comes along.
++    if (Coop_TrySetupDoorWarpAt(x, y, p2->currentElevation, dir))
++    {
++        u8 taskId = CreateTask(Task_CoopP2DoorWarp, 10);
++        gTasks[taskId].data[2] = x;
++        gTasks[taskId].data[3] = y;
++        LockPlayerFieldControls();
++        gFieldCallback = FieldCB_DefaultWarpExit;
++        return;
++    }
++
+     if (GetLedgeJumpDirection(x, y, dir) != DIR_NONE)
+     {
+         s16 landX = x, landY = y;
+@@ -289,6 +366,7 @@ static void TryStartP2Step(struct ObjectEvent *p2)
+         if (IsWithinTether(landX, landY, p1->currentCoords.x, p1->currentCoords.y) && !IsAnyObjectAt(p2, landX, landY))
+         {
+             ObjectEventSetHeldMovement(p2, GetJump2MovementAction(dir));
++            sP2Stepped = TRUE;
+             SpawnObjectsAroundP2();
+             return;
+         }
+@@ -301,6 +379,7 @@ static void TryStartP2Step(struct ObjectEvent *p2)
+             ObjectEventSetHeldMovement(p2, GetWalkFastMovementAction(dir));
+         else
+             ObjectEventSetHeldMovement(p2, GetWalkNormalMovementAction(dir));
++        sP2Stepped = TRUE;
+         SpawnObjectsAroundP2();
+         return;
+     }
+@@ -326,14 +405,19 @@ void CoopP2_Update(void)
+         return;
+     }
+ 
++    if (FuncIsActiveTask(Task_CoopP2DoorWarp))
++        return; // Walking through a door
++
+     if (MustRideAlong())
+     {
++        sP2Stepped = FALSE;
+         RideAlong(p2);
+         return;
+     }
+ 
+     if (p2->invisible)
+     {
++        sP2Stepped = FALSE;
+         // Riding along: hop off once Player 1 stands still with free controls.
+         if (!ArePlayerFieldControlsLocked() && gPlayerAvatar.tileTransitionState == T_NOT_MOVING)
+             PlaceP2NearP1(p2);
+@@ -356,6 +440,14 @@ void CoopP2_Update(void)
+     if (ArePlayerFieldControlsLocked())
+         return; // Menus and cutscenes: Player 2 waits
+ 
++    // Just stepped onto stairs, a ladder, a cave entrance...: both players warp.
++    if (sP2Stepped)
++    {
++        sP2Stepped = FALSE;
++        if (Coop_TryStepWarpAt(p2->currentCoords.x, p2->currentCoords.y, p2->currentElevation, p2->facingDirection, FALSE))
++            return;
++    }
++
+     sP2Interacting = FALSE;
+     if ((CoopLink_GetPlayerNewKeys(COOP_PLAYER_2) & A_BUTTON) && TryP2Interaction(p2))
+         return;
+diff --git a/src/field_control_avatar.c b/src/field_control_avatar.c
+index c38b77aa8..148f92ad0 100644
+--- a/src/field_control_avatar.c
++++ b/src/field_control_avatar.c
+@@ -262,6 +262,65 @@ bool8 Coop_TryStartInteractionAt(s16 x, s16 y, u8 elevation, u8 direction)
+     return TRUE;
+ }
+ 
++// Linked co-op: Player 2 walks into a door at (x, y) (facing north). Sets up
++// the warp so both players go through; the caller animates the door.
++bool8 Coop_TrySetupDoorWarpAt(s16 x, s16 y, u8 elevation, u8 direction)
++{
++    struct MapPosition position;
++    u8 metatileBehavior = MapGridGetMetatileBehaviorAt(x, y);
++    s8 warpEventId;
++
++    if (direction != DIR_NORTH || !MetatileBehavior_IsWarpDoor(metatileBehavior))
++        return FALSE;
++    position.x = x;
++    position.y = y;
++    position.elevation = elevation;
++    warpEventId = GetWarpEventAtMapPosition(&gMapHeader, &position);
++    if (warpEventId == WARP_ID_NONE)
++        return FALSE;
++    StoreInitialPlayerAvatarState();
++    SetupWarp(&gMapHeader, warpEventId, &position);
++    return TRUE;
++}
++
++// Linked co-op: Player 2 is standing on (x, y). With arrow = TRUE, Player 2 is
++// pushing toward an arrow warp (exit mats); otherwise Player 2 just stepped onto
++// a warp tile (stairs, ladders, cave entrances...). Both players warp.
++bool8 Coop_TryStepWarpAt(s16 x, s16 y, u8 elevation, u8 direction, bool8 arrow)
++{
++    struct MapPosition position;
++    u8 metatileBehavior = MapGridGetMetatileBehaviorAt(x, y);
++    s8 warpEventId;
++
++    if (arrow)
++    {
++        if (!IsArrowWarpMetatileBehavior(metatileBehavior, direction))
++            return FALSE;
++    }
++    else
++    {
++        if (!IsWarpMetatileBehavior(metatileBehavior)
++         || MetatileBehavior_IsMtPyreHole(metatileBehavior)
++         || MetatileBehavior_IsUnionRoomWarp(metatileBehavior))
++            return FALSE;
++    }
++    position.x = x;
++    position.y = y;
++    position.elevation = elevation;
++    warpEventId = GetWarpEventAtMapPosition(&gMapHeader, &position);
++    if (warpEventId == WARP_ID_NONE)
++        return FALSE;
++    StoreInitialPlayerAvatarState();
++    SetupWarp(&gMapHeader, warpEventId, &position);
++    DoWarp();
++    return TRUE;
++}
++
++bool8 Coop_IsWarpTile(u8 metatileBehavior)
++{
++    return IsWarpMetatileBehavior(metatileBehavior);
++}
++
+ static const u8 *GetInteractionScript(struct MapPosition *position, u8 metatileBehavior, u8 direction)
+ {
+     const u8 *script = GetInteractedObjectEventScript(position, metatileBehavior, direction);

@@ -1,0 +1,23 @@
+#ifndef GUARD_COOP_LINK_H
+#define GUARD_COOP_LINK_H
+
+// PROOF OF CONCEPT: two linked GBAs (e.g. two mGBA multiplayer windows) walking
+// around the same map, each with its own camera. Both games exchange their
+// button presses every frame over the link cable and move both players
+// identically (lockstep), reusing Emerald's Cable Club link overworld.
+//
+// Set to FALSE to remove the feature entirely.
+#define COOP_LINKED_POC TRUE
+
+// Max distance (in tiles) the two players may be apart. Movement that would
+// exceed it is blocked, so nobody can leave the other player's screen.
+#define COOP_TETHER_X 7
+#define COOP_TETHER_Y 4
+
+extern bool8 gCoopLinkActive;
+
+void CoopLink_Start(void);
+bool8 CoopLink_GetCollision(u8 selfObjEventId, s16 x, s16 y);
+void CoopLink_FreezeNPCs(void);
+
+#endif // GUARD_COOP_LINK_H

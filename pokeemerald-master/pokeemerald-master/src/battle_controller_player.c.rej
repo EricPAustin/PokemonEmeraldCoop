@@ -1,0 +1,59 @@
+--- src/battle_controller_player.c
++++ src/battle_controller_player.c
+@@ -1,4 +1,5 @@
+ #include "global.h"
++#include "coop_link.h"
+ #include "coop.h"
+ #include "battle.h"
+ #include "battle_anim.h"
+@@ -200,6 +201,7 @@ void SetControllerToPlayer(void)
+ 
+ static void PlayerBufferExecCompleted(void)
+ {
++    CoopLink_EndBattlePrompt(); // Linked co-op: both players can advance battle text again
+     gBattlerControllerFuncs[gActiveBattler] = PlayerBufferRunCommand;
+     if (gBattleTypeFlags & BATTLE_TYPE_LINK)
+     {
+@@ -2577,6 +2579,8 @@ static void PlayerHandleChooseAction(void)
+ {
+     s32 i;
+ 
++    CoopLink_SetInputOwnerForBattler(gActiveBattler); // Linked co-op: this battler's player answers
++
+     gBattlerControllerFuncs[gActiveBattler] = HandleChooseActionAfterDma3;
+     BattleTv_ClearExplosionFaintCause();
+     BattlePutTextOnWindow(gText_BattleMenu, B_WIN_ACTION_MENU);
+@@ -2591,6 +2595,7 @@ static void PlayerHandleChooseAction(void)
+ 
+ static void PlayerHandleYesNoBox(void)
+ {
++    CoopLink_SetInputOwnerForBattler(gActiveBattler); // Linked co-op: this battler's player answers
+     if (GetBattlerSide(gActiveBattler) == B_SIDE_PLAYER)
+     {
+         HandleBattleWindow(YESNOBOX_X_Y, 0);
+@@ -2629,6 +2634,7 @@ static void PlayerChooseMoveInBattlePalace(void)
+ 
+ static void PlayerHandleChooseMove(void)
+ {
++    CoopLink_SetInputOwnerForBattler(gActiveBattler); // Linked co-op: this battler's player answers
+     if (gBattleTypeFlags & BATTLE_TYPE_PALACE)
+     {
+         *(gBattleStruct->arenaMindPoints + gActiveBattler) = 8;
+@@ -2655,6 +2661,8 @@ static void PlayerHandleChooseItem(void)
+ {
+     s32 i;
+ 
++    CoopLink_SetInputOwnerForBattler(gActiveBattler); // Linked co-op: this battler's player answers
++
+     BeginNormalPaletteFade(PALETTES_ALL, 0, 0, 0x10, RGB_BLACK);
+     gBattlerControllerFuncs[gActiveBattler] = OpenBagAndChooseItem;
+     gBattlerInMenuId = gActiveBattler;
+@@ -2667,6 +2675,8 @@ static void PlayerHandleChoosePokemon(void)
+ {
+     s32 i;
+ 
++    CoopLink_SetInputOwnerForBattler(gActiveBattler); // Linked co-op: this battler's player answers
++
+     for (i = 0; i < (int)ARRAY_COUNT(gBattlePartyCurrentOrder); i++)
+         gBattlePartyCurrentOrder[i] = gBattleBufferA[gActiveBattler][4 + i];
+ 

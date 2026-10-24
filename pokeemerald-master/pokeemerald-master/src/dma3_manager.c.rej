@@ -1,0 +1,62 @@
+--- src/dma3_manager.c
++++ src/dma3_manager.c
+@@ -39,24 +39,22 @@ void ClearDma3Requests(void)
+     sDma3ManagerLocked = FALSE;
+ }
+ 
+-void ProcessDma3Requests(void)
++static void DoDma3Requests(bool32 limitToVBlank)
+ {
+-    u16 bytesTransferred;
+-
+-    if (sDma3ManagerLocked)
+-        return;
+-
+-    bytesTransferred = 0;
++    u32 bytesTransferred = 0;
+ 
+     // as long as there are DMA requests to process (unless size or vblank is an issue), do not exit
+     while (sDma3Requests[sDma3RequestCursor].size != 0)
+     {
+         bytesTransferred += sDma3Requests[sDma3RequestCursor].size;
+ 
+-        if (bytesTransferred > 40 * 1024)
+-            return; // don't transfer more than 40 KiB
+-        if (*(u8 *)REG_ADDR_VCOUNT > 224)
+-            return; // we're about to leave vblank, stop
++        if (limitToVBlank)
++        {
++            if (bytesTransferred > 40 * 1024)
++                return; // don't transfer more than 40 KiB
++            if (*(u8 *)REG_ADDR_VCOUNT > 224)
++                return; // we're about to leave vblank, stop
++        }
+ 
+         switch (sDma3Requests[sDma3RequestCursor].mode)
+         {
+@@ -95,6 +93,25 @@ void ProcessDma3Requests(void)
+     }
+ }
+ 
++void ProcessDma3Requests(void)
++{
++    if (sDma3ManagerLocked)
++        return;
++    DoDma3Requests(TRUE);
++}
++
++// Linked co-op: finishes every queued copy right away. Otherwise how many
++// screen refreshes a copy takes depends on timing, and code that waits for
++// copies to finish would run differently on the two GBAs.
++void FlushDma3Requests(void)
++{
++    if (sDma3ManagerLocked)
++        return;
++    sDma3ManagerLocked = TRUE; // Keeps the VBlank interrupt from processing them at the same time
++    DoDma3Requests(FALSE);
++    sDma3ManagerLocked = FALSE;
++}
++
+ s16 RequestDma3Copy(const void *src, void *dest, u16 size, u8 mode)
+ {
+     int cursor;

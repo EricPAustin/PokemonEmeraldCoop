@@ -1,0 +1,900 @@
+diff --git a/include/coop.h b/include/coop.h
+new file mode 100644
+index 0000000..1dcfa60
+--- /dev/null
++++ b/include/coop.h
+@@ -0,0 +1,50 @@
++#ifndef GUARD_COOP_H
++#define GUARD_COOP_H
++
++// Two-player co-op support.
++//
++// The party (6 slots) is shared between two players. Every Pokémon carries an
++// owner bit (see struct BoxPokemon::coopOwner), and each player may have at most
++// COOP_TEAM_SIZE Pokémon in the party.
++//
++// In battle, when both players have a Pokémon that can fight, the battle is
++// turned into a double battle: Player 1 controls the left Pokémon and Player 2
++// controls the right one. Each battler can only switch to Pokémon owned by its
++// player. If the opponent only has one Pokémon (wild battles, trainers with a
++// single Pokémon), the opponent's right slot starts the battle empty.
++
++// Set to FALSE to build the vanilla single-player game.
++#define COOP_ENABLED TRUE
++
++#define COOP_PLAYER_1   0
++#define COOP_PLAYER_2   1
++#define COOP_NUM_PLAYERS 2
++#define COOP_TEAM_SIZE  (PARTY_SIZE / COOP_NUM_PLAYERS)
++
++extern bool8 gCoopBattle;
++extern const u8 gText_CoopNotYourMon[];
++
++// Ownership
++u8 GetMonCoopOwner(struct Pokemon *mon);
++void SetMonCoopOwner(struct Pokemon *mon, u8 owner);
++u8 GetBoxMonCoopOwner(struct BoxPokemon *boxMon);
++void SetBoxMonCoopOwner(struct BoxPokemon *boxMon, u8 owner);
++u8 Coop_CountTeam(u8 owner);
++u8 Coop_GetOwnerForNewMon(void);
++void Coop_NormalizeParty(void);
++void Coop_SwapOwners(struct Pokemon *mon1, struct Pokemon *mon2);
++
++// Battle
++void Coop_ResetBattle(void);
++void Coop_InitBattle(void);
++bool8 IsCoopBattle(void);
++u8 Coop_GetBattlerOwner(u8 battler);
++bool8 Coop_IsMonUsableByBattler(u8 battler, struct Pokemon *mon);
++bool8 Coop_SetBattlePartyIds(void);
++void Coop_MarkAbsentBattlersAtStart(void);
++bool8 Coop_IsBattlerAbsent(u8 battler);
++bool8 Coop_IsPartnerAbsent(u8 battler);
++u8 Coop_GetOpposingBattler(u8 battler);
++const u8 *Coop_GetWhatWillPkmnDoText(u8 battler);
++
++#endif // GUARD_COOP_H
+diff --git a/include/pokemon.h b/include/pokemon.h
+index 1794ab3..d540d76 100644
+--- a/include/pokemon.h
++++ b/include/pokemon.h
+@@ -203,7 +203,8 @@ struct BoxPokemon
+     u8 hasSpecies:1;
+     u8 isEgg:1;
+     u8 blockBoxRS:1; // Unused, but Pokémon Box Ruby & Sapphire will refuse to deposit a Pokémon with this flag set
+-    u8 unused:4;
++    u8 coopOwner:1; // Co-op: which player owns this Pokémon (see coop.h)
++    u8 unused:3;
+     u8 otName[PLAYER_NAME_LENGTH];
+     u8 markings;
+     u16 checksum;
+diff --git a/ld_script.ld b/ld_script.ld
+index 2ec9123..d87b01a 100644
+--- a/ld_script.ld
++++ b/ld_script.ld
+@@ -91,6 +91,7 @@ SECTIONS {
+         src/battle_util.o(.text);
+         src/battle_script_commands.o(.text);
+         src/battle_util2.o(.text);
++        src/coop.o(.text);
+         src/battle_controller_player.o(.text);
+         src/battle_gfx_sfx_util.o(.text);
+         src/battle_controller_opponent.o(.text);
+@@ -478,6 +479,7 @@ SECTIONS {
+         src/battle_bg.o(.rodata);
+         src/battle_main.o(.rodata);
+         src/battle_util.o(.rodata);
++        src/coop.o(.rodata);
+         src/battle_script_commands.o(.rodata);
+         src/battle_controller_player.o(.rodata);
+         src/battle_anim_smokescreen.o(.rodata);
+diff --git a/src/battle_controller_opponent.c b/src/battle_controller_opponent.c
+index 12d0f8a..cc81285 100644
+--- a/src/battle_controller_opponent.c
++++ b/src/battle_controller_opponent.c
+@@ -1,4 +1,5 @@
+ #include "global.h"
++#include "coop.h"
+ #include "battle.h"
+ #include "battle_ai_script_commands.h"
+ #include "battle_anim.h"
+@@ -225,7 +226,8 @@ static void Intro_WaitForShinyAnimAndHealthbox(void)
+     bool8 healthboxAnimDone = FALSE;
+     bool8 twoMons;
+ 
+-    if (!IsDoubleBattle() || ((IsDoubleBattle() && (gBattleTypeFlags & BATTLE_TYPE_MULTI)) || (gBattleTypeFlags & BATTLE_TYPE_TWO_OPPONENTS)))
++    if (!IsDoubleBattle() || ((IsDoubleBattle() && (gBattleTypeFlags & BATTLE_TYPE_MULTI)) || (gBattleTypeFlags & BATTLE_TYPE_TWO_OPPONENTS))
++     || Coop_IsPartnerAbsent(gActiveBattler))
+     {
+         if (gSprites[gHealthboxSpriteIds[gActiveBattler]].callback == SpriteCallbackDummy)
+             healthboxAnimDone = TRUE;
+@@ -302,6 +304,7 @@ static void Intro_TryShinyAnimShowHealthbox(void)
+     if (!(gBattleTypeFlags & BATTLE_TYPE_TWO_OPPONENTS)
+      && !(gBattleTypeFlags & BATTLE_TYPE_MULTI)
+      && IsDoubleBattle()
++     && !Coop_IsPartnerAbsent(gActiveBattler)
+      && !gBattleSpritesDataPtr->healthBoxesData[BATTLE_PARTNER(gActiveBattler)].triedShinyMonAnim
+      && !gBattleSpritesDataPtr->healthBoxesData[BATTLE_PARTNER(gActiveBattler)].ballAnimActive
+      && !gBattleSpritesDataPtr->healthBoxesData[BATTLE_PARTNER(gActiveBattler)].finishedShinyMonAnim)
+@@ -311,7 +314,7 @@ static void Intro_TryShinyAnimShowHealthbox(void)
+     {
+         if (!gBattleSpritesDataPtr->healthBoxesData[gActiveBattler].healthboxSlideInStarted)
+         {
+-            if (IsDoubleBattle() && !(gBattleTypeFlags & BATTLE_TYPE_MULTI))
++            if (IsDoubleBattle() && !(gBattleTypeFlags & BATTLE_TYPE_MULTI) && !Coop_IsPartnerAbsent(gActiveBattler))
+             {
+                 UpdateHealthboxAttribute(gHealthboxSpriteIds[BATTLE_PARTNER(gActiveBattler)], &gEnemyParty[gBattlerPartyIndexes[BATTLE_PARTNER(gActiveBattler)]], HEALTHBOX_ALL);
+                 StartHealthboxSlideIn(BATTLE_PARTNER(gActiveBattler));
+@@ -345,7 +348,7 @@ static void Intro_TryShinyAnimShowHealthbox(void)
+         bgmRestored = TRUE;
+     }
+ 
+-    if (!IsDoubleBattle() || (IsDoubleBattle() && (gBattleTypeFlags & BATTLE_TYPE_MULTI)))
++    if (!IsDoubleBattle() || (IsDoubleBattle() && (gBattleTypeFlags & BATTLE_TYPE_MULTI)) || Coop_IsPartnerAbsent(gActiveBattler))
+     {
+         if (gSprites[gBattleControllerData[gActiveBattler]].callback == SpriteCallbackDummy
+             && gSprites[gBattlerSpriteIds[gActiveBattler]].callback == SpriteCallbackDummy)
+@@ -366,7 +369,7 @@ static void Intro_TryShinyAnimShowHealthbox(void)
+ 
+     if (bgmRestored && battlerAnimsDone)
+     {
+-        if (IsDoubleBattle() && !(gBattleTypeFlags & BATTLE_TYPE_MULTI))
++        if (IsDoubleBattle() && !(gBattleTypeFlags & BATTLE_TYPE_MULTI) && !Coop_IsPartnerAbsent(gActiveBattler))
+         {
+             DestroySprite(&gSprites[gBattleControllerData[BATTLE_PARTNER(gActiveBattler)]]);
+             SetBattlerShadowSpriteCallback(BATTLE_PARTNER(gActiveBattler), GetMonData(&gEnemyParty[gBattlerPartyIndexes[BATTLE_PARTNER(gActiveBattler)]], MON_DATA_SPECIES));
+@@ -1899,7 +1902,7 @@ static void Task_StartSendOutAnim(u8 taskId)
+     u8 savedActiveBank = gActiveBattler;
+ 
+     gActiveBattler = gTasks[taskId].data[0];
+-    if (!IsDoubleBattle() || (gBattleTypeFlags & BATTLE_TYPE_MULTI))
++    if (!IsDoubleBattle() || (gBattleTypeFlags & BATTLE_TYPE_MULTI) || Coop_IsPartnerAbsent(gActiveBattler))
+     {
+         gBattleBufferA[gActiveBattler][1] = gBattlerPartyIndexes[gActiveBattler];
+         StartSendOutAnim(gActiveBattler, FALSE);
+diff --git a/src/battle_controller_player.c b/src/battle_controller_player.c
+index 45bf1a1..1121747 100644
+--- a/src/battle_controller_player.c
++++ b/src/battle_controller_player.c
+@@ -1,4 +1,5 @@
+ #include "global.h"
++#include "coop.h"
+ #include "battle.h"
+ #include "battle_anim.h"
+ #include "battle_arena.h"
+@@ -2584,7 +2585,7 @@ static void PlayerHandleChooseAction(void)
+         ActionSelectionDestroyCursorAt(i);
+ 
+     ActionSelectionCreateCursorAt(gActionSelectionCursor[gActiveBattler], 0);
+-    BattleStringExpandPlaceholdersToDisplayedString(gText_WhatWillPkmnDo);
++    BattleStringExpandPlaceholdersToDisplayedString(Coop_GetWhatWillPkmnDoText(gActiveBattler));
+     BattlePutTextOnWindow(gDisplayedStringBattle, B_WIN_ACTION_PROMPT);
+ }
+ 
+diff --git a/src/battle_controllers.c b/src/battle_controllers.c
+index 5357f40..fef6aef 100644
+--- a/src/battle_controllers.c
++++ b/src/battle_controllers.c
+@@ -1,4 +1,5 @@
+ #include "global.h"
++#include "coop.h"
+ #include "battle.h"
+ #include "battle_ai_script_commands.h"
+ #include "battle_anim.h"
+@@ -586,6 +587,9 @@ static void SetBattlePartyIds(void)
+ {
+     s32 i, j;
+ 
++    if (Coop_SetBattlePartyIds())
++        return;
++
+     if (!(gBattleTypeFlags & BATTLE_TYPE_MULTI))
+     {
+         for (i = 0; i < gBattlersCount; i++)
+diff --git a/src/battle_main.c b/src/battle_main.c
+index 11fc168..4454a82 100644
+--- a/src/battle_main.c
++++ b/src/battle_main.c
+@@ -1,4 +1,5 @@
+ #include "global.h"
++#include "coop.h"
+ #include "battle.h"
+ #include "battle_anim.h"
+ #include "battle_ai_script_commands.h"
+@@ -592,6 +593,7 @@ void CB2_InitBattle(void)
+     AllocateBattleSpritesData();
+     AllocateMonSpritesGfx();
+     RecordedBattle_ClearFrontierPassFlag();
++    Coop_ResetBattle();
+ 
+     if (gBattleTypeFlags & BATTLE_TYPE_MULTI)
+     {
+@@ -700,6 +702,9 @@ static void CB2_InitBattleInternal(void)
+         SetWildMonHeldItem();
+     }
+ 
++    // Turns the battle into a co-op double battle if both players can fight.
++    Coop_InitBattle();
++
+     gMain.inBattle = TRUE;
+     gSaveBlock2Ptr->frontier.disableRecordBattle = FALSE;
+ 
+@@ -3019,6 +3024,7 @@ void BeginBattleIntroDummy(void)
+ void BeginBattleIntro(void)
+ {
+     BattleStartClearSetData();
++    Coop_MarkAbsentBattlersAtStart();
+     gBattleCommunication[1] = 0;
+     gBattleMainFunc = BattleIntroGetMonsData;
+ }
+@@ -3400,6 +3406,16 @@ static void BattleIntroDrawTrainersOrMonsSprites(void)
+ 
+     for (gActiveBattler = 0; gActiveBattler < gBattlersCount; gActiveBattler++)
+     {
++        if (Coop_IsBattlerAbsent(gActiveBattler))
++        {
++            // Co-op: this battler's slot starts the battle empty.
++            ptr = (u8 *)&gBattleMons[gActiveBattler];
++            for (i = 0; i < sizeof(struct BattlePokemon); i++)
++                ptr[i] = 0;
++            gBattlerSpriteIds[gActiveBattler] = MAX_SPRITES;
++            continue;
++        }
++
+         if ((gBattleTypeFlags & BATTLE_TYPE_SAFARI)
+             && GetBattlerSide(gActiveBattler) == B_SIDE_PLAYER)
+         {
+@@ -3689,6 +3705,7 @@ static void BattleIntroRecordMonsToDex(void)
+         for (gActiveBattler = 0; gActiveBattler < gBattlersCount; gActiveBattler++)
+         {
+             if (GetBattlerSide(gActiveBattler) == B_SIDE_OPPONENT
++             && !Coop_IsBattlerAbsent(gActiveBattler)
+              && !(gBattleTypeFlags & (BATTLE_TYPE_EREADER_TRAINER
+                                       | BATTLE_TYPE_FRONTIER
+                                       | BATTLE_TYPE_LINK
+diff --git a/src/battle_message.c b/src/battle_message.c
+index a15a4b9..bac6c0f 100644
+--- a/src/battle_message.c
++++ b/src/battle_message.c
+@@ -1,4 +1,5 @@
+ #include "global.h"
++#include "coop.h"
+ #include "battle.h"
+ #include "battle_anim.h"
+ #include "battle_controllers.h"
+@@ -2023,7 +2024,8 @@ void BufferStringBattle(u16 stringID)
+         {
+             if (gBattleTypeFlags & BATTLE_TYPE_LEGENDARY)
+                 stringPtr = sText_LegendaryPkmnAppeared;
+-            else if (gBattleTypeFlags & BATTLE_TYPE_DOUBLE) // interesting, looks like they had something planned for wild double battles
++            else if (gBattleTypeFlags & BATTLE_TYPE_DOUBLE // interesting, looks like they had something planned for wild double battles
++                  && !Coop_IsBattlerAbsent(GetBattlerAtPosition(B_POSITION_OPPONENT_RIGHT)))
+                 stringPtr = sText_TwoWildPkmnAppeared;
+             else if (gBattleTypeFlags & BATTLE_TYPE_WALLY_TUTORIAL)
+                 stringPtr = sText_WildPkmnAppearedPause;
+@@ -2052,7 +2054,7 @@ void BufferStringBattle(u16 stringID)
+         }
+         else
+         {
+-            if (gBattleTypeFlags & BATTLE_TYPE_DOUBLE)
++            if ((gBattleTypeFlags & BATTLE_TYPE_DOUBLE) && !Coop_IsPartnerAbsent(GetBattlerAtPosition(B_POSITION_OPPONENT_LEFT)))
+             {
+                 if (gBattleTypeFlags & BATTLE_TYPE_TWO_OPPONENTS)
+                     stringPtr = sText_TwoTrainersSentPkmn;
+diff --git a/src/battle_script_commands.c b/src/battle_script_commands.c
+index 3af09ec..876b7b8 100644
+--- a/src/battle_script_commands.c
++++ b/src/battle_script_commands.c
+@@ -1,4 +1,5 @@
+ #include "global.h"
++#include "coop.h"
+ #include "battle.h"
+ #include "battle_message.h"
+ #include "battle_anim.h"
+@@ -4838,7 +4839,8 @@ static void Cmd_jumpifcantswitch(void)
+             if (GetMonData(&party[i], MON_DATA_HP) != 0
+              && GetMonData(&party[i], MON_DATA_SPECIES) != SPECIES_NONE
+              && !GetMonData(&party[i], MON_DATA_IS_EGG)
+-             && i != gBattlerPartyIndexes[battlerIn1] && i != gBattlerPartyIndexes[battlerIn2])
++             && i != gBattlerPartyIndexes[battlerIn1] && i != gBattlerPartyIndexes[battlerIn2]
++             && Coop_IsMonUsableByBattler(gActiveBattler, &party[i]))
+                 break;
+         }
+ 
+@@ -7294,6 +7296,21 @@ static void Cmd_forcerandomswitch(void)
+             battler2PartyId = gBattlerPartyIndexes[gBattlerTarget];
+             battler1PartyId = gBattlerPartyIndexes[BATTLE_PARTNER(gBattlerTarget)];
+         }
++        else if (IsCoopBattle() && GetBattlerSide(gBattlerTarget) == B_SIDE_PLAYER)
++        {
++            // Co-op: only the target's own player's Pokémon are counted (see the loops below),
++            // so one other usable Pokémon besides the target is enough.
++            firstMonId = 0;
++            #ifdef BUGFIX
++            lastMonId = PARTY_SIZE - 1;
++            #else
++            lastMonId = PARTY_SIZE;
++            #endif
++            monsCount = PARTY_SIZE;
++            minNeeded = 1;
++            battler2PartyId = gBattlerPartyIndexes[gBattlerTarget];
++            battler1PartyId = gBattlerPartyIndexes[BATTLE_PARTNER(gBattlerTarget)];
++        }
+         else if (gBattleTypeFlags & BATTLE_TYPE_DOUBLE)
+         {
+             firstMonId = 0;
+@@ -7325,7 +7342,8 @@ static void Cmd_forcerandomswitch(void)
+         {
+             if (GetMonData(&party[i], MON_DATA_SPECIES) != SPECIES_NONE
+              && !GetMonData(&party[i], MON_DATA_IS_EGG)
+-             && GetMonData(&party[i], MON_DATA_HP) != 0)
++             && GetMonData(&party[i], MON_DATA_HP) != 0
++             && Coop_IsMonUsableByBattler(gBattlerTarget, &party[i]))
+              {
+                  validMons++;
+              }
+@@ -7349,7 +7367,8 @@ static void Cmd_forcerandomswitch(void)
+                     while (i == battler2PartyId || i == battler1PartyId);
+                 } while (GetMonData(&party[i], MON_DATA_SPECIES) == SPECIES_NONE
+                        || GetMonData(&party[i], MON_DATA_IS_EGG) == TRUE
+-                       || GetMonData(&party[i], MON_DATA_HP) == 0); //should be one while loop, but that doesn't match.
++                       || GetMonData(&party[i], MON_DATA_HP) == 0
++                       || !Coop_IsMonUsableByBattler(gBattlerTarget, &party[i])); //should be one while loop, but that doesn't match.
+         // Bug: If the opponent uses forced switchout moves in a Multi Battle, the player side party
+         //      might get the order messed up where the mons appear in the wrong slots of the party screen.
+         //      This causes a hardlock when all mons on the player side are knocked out and the player
+@@ -9910,7 +9929,7 @@ static void Cmd_handleballthrow(void)
+         return;
+ 
+     gActiveBattler = gBattlerAttacker;
+-    gBattlerTarget = BATTLE_OPPOSITE(gBattlerAttacker);
++    gBattlerTarget = Coop_GetOpposingBattler(gBattlerAttacker);
+ 
+     if (gBattleTypeFlags & BATTLE_TYPE_TRAINER)
+     {
+@@ -10054,18 +10073,18 @@ static void Cmd_handleballthrow(void)
+ 
+ static void Cmd_givecaughtmon(void)
+ {
+-    if (GiveMonToPlayer(&gEnemyParty[gBattlerPartyIndexes[BATTLE_OPPOSITE(gBattlerAttacker)]]) != MON_GIVEN_TO_PARTY)
++    if (GiveMonToPlayer(&gEnemyParty[gBattlerPartyIndexes[Coop_GetOpposingBattler(gBattlerAttacker)]]) != MON_GIVEN_TO_PARTY)
+     {
+         if (!ShouldShowBoxWasFullMessage())
+         {
+             gBattleCommunication[MULTISTRING_CHOOSER] = B_MSG_SENT_SOMEONES_PC;
+             StringCopy(gStringVar1, GetBoxNamePtr(VarGet(VAR_PC_BOX_TO_SEND_MON)));
+-            GetMonData(&gEnemyParty[gBattlerPartyIndexes[BATTLE_OPPOSITE(gBattlerAttacker)]], MON_DATA_NICKNAME, gStringVar2);
++            GetMonData(&gEnemyParty[gBattlerPartyIndexes[Coop_GetOpposingBattler(gBattlerAttacker)]], MON_DATA_NICKNAME, gStringVar2);
+         }
+         else
+         {
+             StringCopy(gStringVar1, GetBoxNamePtr(VarGet(VAR_PC_BOX_TO_SEND_MON))); // box the mon was sent to
+-            GetMonData(&gEnemyParty[gBattlerPartyIndexes[BATTLE_OPPOSITE(gBattlerAttacker)]], MON_DATA_NICKNAME, gStringVar2);
++            GetMonData(&gEnemyParty[gBattlerPartyIndexes[Coop_GetOpposingBattler(gBattlerAttacker)]], MON_DATA_NICKNAME, gStringVar2);
+             StringCopy(gStringVar3, GetBoxNamePtr(GetPCBoxToSendMon())); //box the mon was going to be sent to
+             gBattleCommunication[MULTISTRING_CHOOSER] = B_MSG_SOMEONES_BOX_FULL;
+         }
+@@ -10075,9 +10094,9 @@ static void Cmd_givecaughtmon(void)
+             gBattleCommunication[MULTISTRING_CHOOSER]++;
+     }
+ 
+-    gBattleResults.caughtMonSpecies = GetMonData(&gEnemyParty[gBattlerPartyIndexes[BATTLE_OPPOSITE(gBattlerAttacker)]], MON_DATA_SPECIES, NULL);
+-    GetMonData(&gEnemyParty[gBattlerPartyIndexes[BATTLE_OPPOSITE(gBattlerAttacker)]], MON_DATA_NICKNAME, gBattleResults.caughtMonNick);
+-    gBattleResults.caughtMonBall = GetMonData(&gEnemyParty[gBattlerPartyIndexes[BATTLE_OPPOSITE(gBattlerAttacker)]], MON_DATA_POKEBALL, NULL);
++    gBattleResults.caughtMonSpecies = GetMonData(&gEnemyParty[gBattlerPartyIndexes[Coop_GetOpposingBattler(gBattlerAttacker)]], MON_DATA_SPECIES, NULL);
++    GetMonData(&gEnemyParty[gBattlerPartyIndexes[Coop_GetOpposingBattler(gBattlerAttacker)]], MON_DATA_NICKNAME, gBattleResults.caughtMonNick);
++    gBattleResults.caughtMonBall = GetMonData(&gEnemyParty[gBattlerPartyIndexes[Coop_GetOpposingBattler(gBattlerAttacker)]], MON_DATA_POKEBALL, NULL);
+ 
+     gBattlescriptCurrInstr++;
+ }
+@@ -10265,13 +10284,13 @@ static void Cmd_trygivecaughtmonnick(void)
+     case 2:
+         if (!gPaletteFade.active)
+         {
+-            GetMonData(&gEnemyParty[gBattlerPartyIndexes[BATTLE_OPPOSITE(gBattlerAttacker)]], MON_DATA_NICKNAME, gBattleStruct->caughtMonNick);
++            GetMonData(&gEnemyParty[gBattlerPartyIndexes[Coop_GetOpposingBattler(gBattlerAttacker)]], MON_DATA_NICKNAME, gBattleStruct->caughtMonNick);
+             FreeAllWindowBuffers();
+ 
+             DoNamingScreen(NAMING_SCREEN_CAUGHT_MON, gBattleStruct->caughtMonNick,
+-                           GetMonData(&gEnemyParty[gBattlerPartyIndexes[BATTLE_OPPOSITE(gBattlerAttacker)]], MON_DATA_SPECIES),
+-                           GetMonGender(&gEnemyParty[gBattlerPartyIndexes[BATTLE_OPPOSITE(gBattlerAttacker)]]),
+-                           GetMonData(&gEnemyParty[gBattlerPartyIndexes[BATTLE_OPPOSITE(gBattlerAttacker)]], MON_DATA_PERSONALITY, NULL),
++                           GetMonData(&gEnemyParty[gBattlerPartyIndexes[Coop_GetOpposingBattler(gBattlerAttacker)]], MON_DATA_SPECIES),
++                           GetMonGender(&gEnemyParty[gBattlerPartyIndexes[Coop_GetOpposingBattler(gBattlerAttacker)]]),
++                           GetMonData(&gEnemyParty[gBattlerPartyIndexes[Coop_GetOpposingBattler(gBattlerAttacker)]], MON_DATA_PERSONALITY, NULL),
+                            BattleMainCB2);
+ 
+             gBattleCommunication[MULTIUSE_STATE]++;
+@@ -10280,7 +10299,7 @@ static void Cmd_trygivecaughtmonnick(void)
+     case 3:
+         if (gMain.callback2 == BattleMainCB2 && !gPaletteFade.active)
+         {
+-            SetMonData(&gEnemyParty[gBattlerPartyIndexes[BATTLE_OPPOSITE(gBattlerAttacker)]], MON_DATA_NICKNAME, gBattleStruct->caughtMonNick);
++            SetMonData(&gEnemyParty[gBattlerPartyIndexes[Coop_GetOpposingBattler(gBattlerAttacker)]], MON_DATA_NICKNAME, gBattleStruct->caughtMonNick);
+             gBattlescriptCurrInstr = T1_READ_PTR(gBattlescriptCurrInstr + 1);
+         }
+         break;
+diff --git a/src/battle_util.c b/src/battle_util.c
+index 8949cdb..97ec1dd 100644
+--- a/src/battle_util.c
++++ b/src/battle_util.c
+@@ -1,4 +1,5 @@
+ #include "global.h"
++#include "coop.h"
+ #include "battle.h"
+ #include "battle_anim.h"
+ #include "battle_arena.h"
+@@ -451,18 +452,21 @@ bool8 TryRunFromBattle(u8 battler)
+     }
+     else
+     {
+-        if (!(gBattleTypeFlags & BATTLE_TYPE_DOUBLE))
++        if (!(gBattleTypeFlags & BATTLE_TYPE_DOUBLE) || IsCoopBattle())
+         {
++            // In co-op battles the opposing slot may be empty, so compare against the other foe.
++            u8 opposing = Coop_GetOpposingBattler(battler);
++
+             if (CurrentBattlePyramidLocation() != PYRAMID_LOCATION_NONE)
+             {
+                 pyramidMultiplier = GetPyramidRunMultiplier();
+-                speedVar = (gBattleMons[battler].speed * pyramidMultiplier) / (gBattleMons[BATTLE_OPPOSITE(battler)].speed) + (gBattleStruct->runTries * 30);
++                speedVar = (gBattleMons[battler].speed * pyramidMultiplier) / (gBattleMons[opposing].speed) + (gBattleStruct->runTries * 30);
+                 if (speedVar > (Random() & 0xFF))
+                     effect++;
+             }
+-            else if (gBattleMons[battler].speed < gBattleMons[BATTLE_OPPOSITE(battler)].speed)
++            else if (gBattleMons[battler].speed < gBattleMons[opposing].speed)
+             {
+-                speedVar = (gBattleMons[battler].speed * 128) / (gBattleMons[BATTLE_OPPOSITE(battler)].speed) + (gBattleStruct->runTries * 30);
++                speedVar = (gBattleMons[battler].speed * 128) / (gBattleMons[opposing].speed) + (gBattleStruct->runTries * 30);
+                 if (speedVar > (Random() & 0xFF))
+                     effect++;
+             }
+@@ -2372,7 +2376,8 @@ bool8 HasNoMonsToSwitch(u8 battler, u8 partyIdBattlerOn1, u8 partyIdBattlerOn2)
+              && GetMonData(&party[i], MON_DATA_SPECIES_OR_EGG) != SPECIES_NONE
+              && GetMonData(&party[i], MON_DATA_SPECIES_OR_EGG) != SPECIES_EGG
+              && i != partyIdBattlerOn1 && i != partyIdBattlerOn2
+-             && i != *(gBattleStruct->monToSwitchIntoId + flankId) && i != playerId[gBattleStruct->monToSwitchIntoId])
++             && i != *(gBattleStruct->monToSwitchIntoId + flankId) && i != playerId[gBattleStruct->monToSwitchIntoId]
++             && Coop_IsMonUsableByBattler(battler, &party[i]))
+                 break;
+         }
+         return (i == PARTY_SIZE);
+diff --git a/src/coop.c b/src/coop.c
+new file mode 100644
+index 0000000..64b2751
+--- /dev/null
++++ b/src/coop.c
+@@ -0,0 +1,349 @@
++#include "global.h"
++#include "battle.h"
++#include "battle_anim.h"
++#include "battle_message.h"
++#include "coop.h"
++#include "main.h"
++#include "pokemon.h"
++#include "util.h"
++#include "constants/battle.h"
++#include "constants/species.h"
++
++// Battle types that keep their vanilla behavior (no co-op double battle).
++#define COOP_INELIGIBLE_BATTLE_TYPES (BATTLE_TYPE_LINK              \
++                                    | BATTLE_TYPE_LINK_IN_BATTLE    \
++                                    | BATTLE_TYPE_RECORDED          \
++                                    | BATTLE_TYPE_RECORDED_LINK     \
++                                    | BATTLE_TYPE_FRONTIER          \
++                                    | BATTLE_TYPE_MULTI             \
++                                    | BATTLE_TYPE_INGAME_PARTNER    \
++                                    | BATTLE_TYPE_TOWER_LINK_MULTI  \
++                                    | BATTLE_TYPE_SAFARI            \
++                                    | BATTLE_TYPE_WALLY_TUTORIAL    \
++                                    | BATTLE_TYPE_FIRST_BATTLE      \
++                                    | BATTLE_TYPE_TRAINER_HILL      \
++                                    | BATTLE_TYPE_EREADER_TRAINER)
++
++EWRAM_DATA bool8 gCoopBattle = FALSE;
++
++static const u8 sText_CoopP1WhatWillPkmnDo[] = _("P1: What will\n{B_ACTIVE_NAME_WITH_PREFIX} do?");
++static const u8 sText_CoopP2WhatWillPkmnDo[] = _("P2: What will\n{B_ACTIVE_NAME_WITH_PREFIX} do?");
++const u8 gText_CoopNotYourMon[] = _("{STR_VAR_1} belongs to\nthe other player!");
++
++// ---------------------------------------------------------------------------
++// Ownership
++// ---------------------------------------------------------------------------
++
++u8 GetBoxMonCoopOwner(struct BoxPokemon *boxMon)
++{
++    return boxMon->coopOwner;
++}
++
++void SetBoxMonCoopOwner(struct BoxPokemon *boxMon, u8 owner)
++{
++    boxMon->coopOwner = (owner == COOP_PLAYER_2) ? COOP_PLAYER_2 : COOP_PLAYER_1;
++}
++
++u8 GetMonCoopOwner(struct Pokemon *mon)
++{
++    return GetBoxMonCoopOwner(&mon->box);
++}
++
++void SetMonCoopOwner(struct Pokemon *mon, u8 owner)
++{
++    SetBoxMonCoopOwner(&mon->box, owner);
++}
++
++void Coop_SwapOwners(struct Pokemon *mon1, struct Pokemon *mon2)
++{
++    u8 owner1 = GetMonCoopOwner(mon1);
++
++    SetMonCoopOwner(mon1, GetMonCoopOwner(mon2));
++    SetMonCoopOwner(mon2, owner1);
++}
++
++static bool8 IsPartySlotFilled(struct Pokemon *mon)
++{
++    return GetMonData(mon, MON_DATA_SPECIES, NULL) != SPECIES_NONE;
++}
++
++static bool8 IsMonAbleToBattle(struct Pokemon *mon)
++{
++    return GetMonData(mon, MON_DATA_SPECIES_OR_EGG, NULL) != SPECIES_NONE
++        && GetMonData(mon, MON_DATA_SPECIES_OR_EGG, NULL) != SPECIES_EGG
++        && !GetMonData(mon, MON_DATA_IS_EGG, NULL)
++        && GetMonData(mon, MON_DATA_HP, NULL) != 0;
++}
++
++u8 Coop_CountTeam(u8 owner)
++{
++    s32 i;
++    u8 count = 0;
++
++    for (i = 0; i < PARTY_SIZE; i++)
++    {
++        if (IsPartySlotFilled(&gPlayerParty[i]) && GetMonCoopOwner(&gPlayerParty[i]) == owner)
++            count++;
++    }
++    return count;
++}
++
++// Makes sure no player has more than COOP_TEAM_SIZE Pokémon in the party.
++// Extra Pokémon are handed to the other player. Never reorders the party.
++static void FixTeamOverflow(void)
++{
++    s32 i;
++    u8 counts[COOP_NUM_PLAYERS];
++
++    counts[COOP_PLAYER_1] = 0;
++    counts[COOP_PLAYER_2] = 0;
++
++    for (i = 0; i < PARTY_SIZE; i++)
++    {
++        u8 owner;
++
++        if (!IsPartySlotFilled(&gPlayerParty[i]))
++            continue;
++
++        owner = GetMonCoopOwner(&gPlayerParty[i]);
++        if (counts[owner] >= COOP_TEAM_SIZE)
++        {
++            owner ^= 1;
++            SetMonCoopOwner(&gPlayerParty[i], owner);
++        }
++        counts[owner]++;
++    }
++}
++
++// Stable sort so that Player 1's Pokémon come first, then Player 2's.
++static void SortPartyByOwner(void)
++{
++    s32 i, j;
++    struct Pokemon temp;
++
++    CalculatePlayerPartyCount();
++    for (i = 1; i < gPlayerPartyCount; i++)
++    {
++        for (j = i; j > 0; j--)
++        {
++            if (GetMonCoopOwner(&gPlayerParty[j - 1]) != COOP_PLAYER_2
++             || GetMonCoopOwner(&gPlayerParty[j]) != COOP_PLAYER_1)
++                break;
++
++            temp = gPlayerParty[j - 1];
++            gPlayerParty[j - 1] = gPlayerParty[j];
++            gPlayerParty[j] = temp;
++        }
++    }
++}
++
++// Must not be called during a battle, since it can reorder the party.
++void Coop_NormalizeParty(void)
++{
++    if (!COOP_ENABLED)
++        return;
++
++    FixTeamOverflow();
++    SortPartyByOwner();
++}
++
++// Returns the player who should receive a newly obtained Pokémon: whoever has
++// fewer Pokémon in the party (Player 1 on a tie), so both teams fill up evenly.
++// Does not reorder the party, so it is safe to call during battle.
++u8 Coop_GetOwnerForNewMon(void)
++{
++    u8 count1, count2;
++
++    FixTeamOverflow();
++    count1 = Coop_CountTeam(COOP_PLAYER_1);
++    count2 = Coop_CountTeam(COOP_PLAYER_2);
++
++    if (count1 >= COOP_TEAM_SIZE)
++        return COOP_PLAYER_2;
++    if (count2 >= COOP_TEAM_SIZE)
++        return COOP_PLAYER_1;
++    if (count2 < count1)
++        return COOP_PLAYER_2;
++    return COOP_PLAYER_1;
++}
++
++// ---------------------------------------------------------------------------
++// Battle
++// ---------------------------------------------------------------------------
++
++static bool8 CanTeamFight(u8 owner)
++{
++    s32 i;
++
++    for (i = 0; i < PARTY_SIZE; i++)
++    {
++        if (IsMonAbleToBattle(&gPlayerParty[i]) && GetMonCoopOwner(&gPlayerParty[i]) == owner)
++            return TRUE;
++    }
++    return FALSE;
++}
++
++void Coop_ResetBattle(void)
++{
++    gCoopBattle = FALSE;
++}
++
++// Called from CB2_InitBattleInternal once the enemy party has been created.
++void Coop_InitBattle(void)
++{
++    gCoopBattle = FALSE;
++
++    if (!COOP_ENABLED)
++        return;
++    if (gBattleTypeFlags & COOP_INELIGIBLE_BATTLE_TYPES)
++        return;
++
++    Coop_NormalizeParty();
++
++    // If only one player can fight, the battle plays out as in the original game.
++    if (!CanTeamFight(COOP_PLAYER_1) || !CanTeamFight(COOP_PLAYER_2))
++        return;
++
++    gCoopBattle = TRUE;
++    gBattleTypeFlags |= BATTLE_TYPE_DOUBLE;
++}
++
++bool8 IsCoopBattle(void)
++{
++    return gCoopBattle && gMain.inBattle;
++}
++
++u8 Coop_GetBattlerOwner(u8 battler)
++{
++    if (GetBattlerPosition(battler) & BIT_FLANK)
++        return COOP_PLAYER_2;
++    else
++        return COOP_PLAYER_1;
++}
++
++// Whether the given battler is allowed to switch to / be replaced by this Pokémon.
++// Always TRUE outside co-op battles and for the opponent's side.
++bool8 Coop_IsMonUsableByBattler(u8 battler, struct Pokemon *mon)
++{
++    if (!IsCoopBattle() || GetBattlerSide(battler) != B_SIDE_PLAYER)
++        return TRUE;
++
++    return GetMonCoopOwner(mon) == Coop_GetBattlerOwner(battler);
++}
++
++static u8 GetFirstAbleMon(struct Pokemon *party, s32 exclude, s32 owner)
++{
++    s32 i;
++
++    for (i = 0; i < PARTY_SIZE; i++)
++    {
++        if (i == exclude)
++            continue;
++        if (owner >= 0 && GetMonCoopOwner(&party[i]) != owner)
++            continue;
++        if (IsMonAbleToBattle(&party[i]))
++            return i;
++    }
++    return PARTY_SIZE;
++}
++
++// Picks the Pokémon each battler starts with. Returns FALSE if this is not a co-op battle,
++// in which case the vanilla logic is used.
++bool8 Coop_SetBattlePartyIds(void)
++{
++    u8 battler, left, right;
++    s32 i, id;
++
++    if (!IsCoopBattle())
++        return FALSE;
++
++    // Player side: left is Player 1, right is Player 2.
++    for (battler = 0; battler < gBattlersCount; battler++)
++    {
++        if (GetBattlerSide(battler) != B_SIDE_PLAYER)
++            continue;
++
++        id = GetFirstAbleMon(gPlayerParty, -1, Coop_GetBattlerOwner(battler));
++        gBattlerPartyIndexes[battler] = (id == PARTY_SIZE) ? 0 : id;
++    }
++
++    // Opponent side
++    left = GetBattlerAtPosition(B_POSITION_OPPONENT_LEFT);
++    right = GetBattlerAtPosition(B_POSITION_OPPONENT_RIGHT);
++    if (gBattleTypeFlags & BATTLE_TYPE_TWO_OPPONENTS)
++    {
++        gBattlerPartyIndexes[left] = 0;
++        gBattlerPartyIndexes[right] = PARTY_SIZE / 2;
++        return TRUE;
++    }
++
++    id = GetFirstAbleMon(gEnemyParty, -1, -1);
++    gBattlerPartyIndexes[left] = (id == PARTY_SIZE) ? 0 : id;
++
++    id = GetFirstAbleMon(gEnemyParty, gBattlerPartyIndexes[left], -1);
++    if (id == PARTY_SIZE)
++    {
++        // The opponent only has one Pokémon. Point the right battler at a slot
++        // that can't fight (preferably an empty one); it starts the battle absent.
++        for (i = 0; i < PARTY_SIZE; i++)
++        {
++            if (i != gBattlerPartyIndexes[left] && !IsPartySlotFilled(&gEnemyParty[i]))
++                break;
++        }
++        if (i == PARTY_SIZE)
++        {
++            for (i = 0; i < PARTY_SIZE; i++)
++            {
++                if (i != gBattlerPartyIndexes[left] && GetMonData(&gEnemyParty[i], MON_DATA_HP, NULL) == 0)
++                    break;
++            }
++        }
++        id = (i == PARTY_SIZE) ? gBattlerPartyIndexes[left] : i;
++    }
++    gBattlerPartyIndexes[right] = id;
++    return TRUE;
++}
++
++// Called at the start of the battle intro, right after the absent flags are cleared.
++void Coop_MarkAbsentBattlersAtStart(void)
++{
++    u8 left, right;
++
++    if (!IsCoopBattle() || (gBattleTypeFlags & BATTLE_TYPE_TWO_OPPONENTS))
++        return;
++
++    left = GetBattlerAtPosition(B_POSITION_OPPONENT_LEFT);
++    right = GetBattlerAtPosition(B_POSITION_OPPONENT_RIGHT);
++    if (gBattlerPartyIndexes[right] == gBattlerPartyIndexes[left]
++     || !IsMonAbleToBattle(&gEnemyParty[gBattlerPartyIndexes[right]]))
++        gAbsentBattlerFlags |= gBitTable[right];
++}
++
++bool8 Coop_IsBattlerAbsent(u8 battler)
++{
++    return IsCoopBattle() && (gAbsentBattlerFlags & gBitTable[battler]);
++}
++
++bool8 Coop_IsPartnerAbsent(u8 battler)
++{
++    return Coop_IsBattlerAbsent(BATTLE_PARTNER(battler));
++}
++
++// The battler directly across the field, or the other opposing battler if that slot is empty.
++u8 Coop_GetOpposingBattler(u8 battler)
++{
++    u8 opposing = BATTLE_OPPOSITE(battler);
++
++    if (IsCoopBattle() && (gAbsentBattlerFlags & gBitTable[opposing]))
++        opposing = BATTLE_PARTNER(opposing);
++    return opposing;
++}
++
++const u8 *Coop_GetWhatWillPkmnDoText(u8 battler)
++{
++    if (!IsCoopBattle() || GetBattlerSide(battler) != B_SIDE_PLAYER)
++        return gText_WhatWillPkmnDo;
++    if (Coop_GetBattlerOwner(battler) == COOP_PLAYER_2)
++        return sText_CoopP2WhatWillPkmnDo;
++    return sText_CoopP1WhatWillPkmnDo;
++}
+diff --git a/src/party_menu.c b/src/party_menu.c
+index 1b23059..92f74de 100755
+--- a/src/party_menu.c
++++ b/src/party_menu.c
+@@ -1,4 +1,5 @@
+ #include "global.h"
++#include "coop.h"
+ #include "malloc.h"
+ #include "battle.h"
+ #include "battle_anim.h"
+@@ -527,6 +528,9 @@ static void InitPartyMenu(u8 menuType, u8 layout, u8 partyAction, bool8 keepCurs
+             gPartyMenu.slotId = 0;
+ 
+         gTextFlags.autoScroll = 0;
++        // Co-op: keep each player's team grouped together (Player 1 first).
++        if (!gMain.inBattle && menuType != PARTY_MENU_TYPE_MULTI_SHOWCASE)
++            Coop_NormalizeParty();
+         CalculatePlayerPartyCount();
+         SetMainCallback2(CB2_InitPartyMenu);
+     }
+@@ -1190,6 +1194,15 @@ static bool8 PartyBoxPal_ParnterOrDisqualifiedInArena(u8 slot)
+     if (gPartyMenu.layout == PARTY_LAYOUT_MULTI && (slot == 1 || slot == 4 || slot == 5))
+         return TRUE;
+ 
++    // Co-op: Player 2's Pokémon use the alternate (partner) box color.
++    if (COOP_ENABLED
++     && gPartyMenu.layout != PARTY_LAYOUT_MULTI
++     && gPartyMenu.layout != PARTY_LAYOUT_MULTI_SHOWCASE
++     && slot < PARTY_SIZE
++     && GetMonData(&gPlayerParty[slot], MON_DATA_SPECIES) != SPECIES_NONE
++     && GetMonCoopOwner(&gPlayerParty[slot]) == COOP_PLAYER_2)
++        return TRUE;
++
+     if (slot < MULTI_PARTY_SIZE && (gBattleTypeFlags & BATTLE_TYPE_ARENA) && gMain.inBattle && (gBattleStruct->arenaLostPlayerMons >> GetPartyIdFromBattleSlot(slot) & 1))
+         return TRUE;
+ 
+@@ -3028,6 +3041,9 @@ static void SwitchPartyMon(void)
+     *mon1 = *mon2;
+     *mon2 = *monBuffer;
+     Free(monBuffer);
++    // Co-op: team membership stays with the slot, so switching a Pokémon into
++    // the other player's group hands it over to that player.
++    Coop_SwapOwners(mon1, mon2);
+     SwitchMenuBoxSprites(&menuBoxes[0]->pokeballSpriteId, &menuBoxes[1]->pokeballSpriteId);
+     SwitchMenuBoxSprites(&menuBoxes[0]->itemSpriteId, &menuBoxes[1]->itemSpriteId);
+     SwitchMenuBoxSprites(&menuBoxes[0]->monSpriteId, &menuBoxes[1]->monSpriteId);
+@@ -5810,6 +5826,13 @@ static bool8 TrySwitchInPokemon(void)
+         StringExpandPlaceholders(gStringVar4, gText_CantSwitchWithAlly);
+         return FALSE;
+     }
++    // Co-op: each player can only send out their own Pokémon
++    if (!Coop_IsMonUsableByBattler(gBattlerInMenuId, &gPlayerParty[slot]))
++    {
++        GetMonNickname(&gPlayerParty[slot], gStringVar1);
++        StringExpandPlaceholders(gStringVar4, gText_CoopNotYourMon);
++        return FALSE;
++    }
+     if (GetMonData(&gPlayerParty[slot], MON_DATA_HP) == 0)
+     {
+         GetMonNickname(&gPlayerParty[slot], gStringVar1);
+diff --git a/src/pokemon.c b/src/pokemon.c
+index 4b5c197..c820874 100644
+--- a/src/pokemon.c
++++ b/src/pokemon.c
+@@ -1,4 +1,5 @@
+ #include "global.h"
++#include "coop.h"
+ #include "malloc.h"
+ #include "apprentice.h"
+ #include "battle.h"
+@@ -4439,6 +4440,12 @@ u8 GiveMonToPlayer(struct Pokemon *mon)
+     if (i >= PARTY_SIZE)
+         return CopyMonToPC(mon);
+ 
++    // Co-op: the new Pokémon joins whichever player still has room (Player 1 first).
++    if (COOP_ENABLED)
++        SetMonCoopOwner(mon, Coop_GetOwnerForNewMon());
++
++    // Not sorted here: scripts expect a new Pokémon to be in the last slot
++    // (e.g. for nicknaming). The party menu and battles regroup the teams.
+     CopyMon(&gPlayerParty[i], mon, sizeof(*mon));
+     gPlayerPartyCount = i + 1;
+     return MON_GIVEN_TO_PARTY;

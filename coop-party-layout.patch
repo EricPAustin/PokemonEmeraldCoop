@@ -1,0 +1,100 @@
+diff --git a/include/coop.h b/include/coop.h
+index 30f7a63cd..29d0d1e56 100644
+--- a/include/coop.h
++++ b/include/coop.h
+@@ -32,6 +32,7 @@ void SetBoxMonCoopOwner(struct BoxPokemon *boxMon, u8 owner);
+ u8 Coop_CountTeam(u8 owner);
+ u8 Coop_GetOwnerForNewMon(void);
+ void Coop_NormalizeParty(void);
++bool8 Coop_BothTeamsInParty(void);
+ void Coop_SwapOwners(struct Pokemon *mon1, struct Pokemon *mon2);
+ 
+ // Battle
+diff --git a/src/coop.c b/src/coop.c
+index 7fc69204d..76e0c7b08 100644
+--- a/src/coop.c
++++ b/src/coop.c
+@@ -124,26 +124,47 @@ static void FixTeamOverflow(void)
+     }
+ }
+ 
+-// Stable sort so that Player 1's Pokémon come first, then Player 2's.
++// Puts the party in co-op order, the same layout as the party screen in a
++// co-op battle: Player 1's lead, Player 2's lead, then the rest of Player 1's
++// team, then the rest of Player 2's. Each team keeps its own order.
+ static void SortPartyByOwner(void)
+ {
+-    s32 i, j;
+-    struct Pokemon temp;
++    struct Pokemon *sorted = AllocZeroed(sizeof(struct Pokemon) * PARTY_SIZE);
++    u8 team[COOP_NUM_PLAYERS][PARTY_SIZE];
++    u8 count[COOP_NUM_PLAYERS] = {0, 0};
++    s32 i, n = 0;
++    u8 owner;
++
++    if (sorted == NULL)
++        return;
+ 
+     CalculatePlayerPartyCount();
+-    for (i = 1; i < gPlayerPartyCount; i++)
++    for (i = 0; i < gPlayerPartyCount; i++)
+     {
+-        for (j = i; j > 0; j--)
+-        {
+-            if (GetMonCoopOwner(&gPlayerParty[j - 1]) != COOP_PLAYER_2
+-             || GetMonCoopOwner(&gPlayerParty[j]) != COOP_PLAYER_1)
+-                break;
++        owner = GetMonCoopOwner(&gPlayerParty[i]);
++        team[owner][count[owner]++] = i;
++    }
+ 
+-            temp = gPlayerParty[j - 1];
+-            gPlayerParty[j - 1] = gPlayerParty[j];
+-            gPlayerParty[j] = temp;
+-        }
++    for (owner = 0; owner < COOP_NUM_PLAYERS; owner++)
++    {
++        if (count[owner] != 0)
++            sorted[n++] = gPlayerParty[team[owner][0]];
++    }
++    for (owner = 0; owner < COOP_NUM_PLAYERS; owner++)
++    {
++        for (i = 1; i < count[owner]; i++)
++            sorted[n++] = gPlayerParty[team[owner][i]];
+     }
++    for (i = 0; i < n; i++)
++        gPlayerParty[i] = sorted[i];
++    Free(sorted);
++}
++
++// TRUE if both players have a Pokémon in the party: the party screen then
++// uses the two-column co-op layout.
++bool8 Coop_BothTeamsInParty(void)
++{
++    return COOP_ENABLED && Coop_CountTeam(COOP_PLAYER_1) != 0 && Coop_CountTeam(COOP_PLAYER_2) != 0;
+ }
+ 
+ // Must not be called during a battle, since it can reorder the party.
+diff --git a/src/party_menu.c b/src/party_menu.c
+index 92f74de32..b6e452946 100755
+--- a/src/party_menu.c
++++ b/src/party_menu.c
+@@ -528,9 +528,17 @@ static void InitPartyMenu(u8 menuType, u8 layout, u8 partyAction, bool8 keepCurs
+             gPartyMenu.slotId = 0;
+ 
+         gTextFlags.autoScroll = 0;
+-        // Co-op: keep each player's team grouped together (Player 1 first).
++        // Co-op: show the party like in a co-op battle. Both players' leads on
++        // the left (Player 1 on top), the rest of each team on the right.
+         if (!gMain.inBattle && menuType != PARTY_MENU_TYPE_MULTI_SHOWCASE)
++        {
+             Coop_NormalizeParty();
++            if (gPartyMenu.layout == PARTY_LAYOUT_SINGLE
++             && menuType != PARTY_MENU_TYPE_CHOOSE_HALF
++             && menuType != PARTY_MENU_TYPE_MINIGAME
++             && Coop_BothTeamsInParty())
++                gPartyMenu.layout = PARTY_LAYOUT_DOUBLE;
++        }
+         CalculatePlayerPartyCount();
+         SetMainCallback2(CB2_InitPartyMenu);
+     }

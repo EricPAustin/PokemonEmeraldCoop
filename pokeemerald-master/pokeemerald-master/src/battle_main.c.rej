@@ -1,0 +1,18 @@
+--- src/battle_main.c
++++ src/battle_main.c
+@@ -1,4 +1,5 @@
+ #include "global.h"
++#include "coop_link.h"
+ #include "coop.h"
+ #include "battle.h"
+ #include "battle_anim.h"
+@@ -2089,7 +2090,8 @@ static void UNUSED HBlankCB_Battle(void)
+ void VBlankCB_Battle(void)
+ {
+     // Change gRngSeed every vblank unless the battle could be recorded.
+-    if (!(gBattleTypeFlags & (BATTLE_TYPE_LINK | BATTLE_TYPE_FRONTIER | BATTLE_TYPE_RECORDED)))
++    // (In linked co-op the RNG advances once per simulated frame instead.)
++    if (!gCoopLinkActive && !(gBattleTypeFlags & (BATTLE_TYPE_LINK | BATTLE_TYPE_FRONTIER | BATTLE_TYPE_RECORDED)))
+         Random();
+ 
+     SetGpuReg(REG_OFFSET_BG0HOFS, gBattle_BG0_X);

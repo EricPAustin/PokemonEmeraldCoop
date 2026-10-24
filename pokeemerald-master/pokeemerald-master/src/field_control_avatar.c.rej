@@ -1,0 +1,24 @@
+--- src/field_control_avatar.c
++++ src/field_control_avatar.c
+@@ -186,12 +186,6 @@ int ProcessPlayerFieldInput(struct FieldInput *input)
+         ShowStartMenu();
+         return TRUE;
+     }
+-    // Co-op link proof of concept: SELECT (with no registered item) starts the link.
+-    if (COOP_LINKED_POC && input->pressedSelectButton && gSaveBlock1Ptr->registeredItem == ITEM_NONE)
+-    {
+-        CoopLink_Start();
+-        return TRUE;
+-    }
+     if (input->pressedSelectButton && UseRegisteredKeyItemOnField() == TRUE)
+         return TRUE;
+ 
+@@ -306,6 +300,8 @@ static const u8 *GetInteractedObjectEventScript(struct MapPosition *position, u8
+         if (objectEventId == OBJECT_EVENTS_COUNT || gObjectEvents[objectEventId].localId == LOCALID_PLAYER)
+             return NULL;
+     }
++    if (CoopP2_IsObjectP2(&gObjectEvents[objectEventId]))
++        return NULL; // Linked co-op: nothing happens when talking to Player 2
+ 
+     gSelectedObjectEvent = objectEventId;
+     gSpecialVar_LastTalked = gObjectEvents[objectEventId].localId;

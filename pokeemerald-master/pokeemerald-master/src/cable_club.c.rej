@@ -1,0 +1,23 @@
+--- src/cable_club.c
++++ src/cable_club.c
+@@ -1,4 +1,5 @@
+ #include "global.h"
++#include "coop_link.h"
+ #include "main.h"
+ #include "battle.h"
+ #include "battle_records.h"
+@@ -82,6 +83,14 @@ static void Task_ReestablishLinkAwaitConfirmation(u8 taskId);
+ 
+ static void CreateLinkupTask(u8 minPlayers, u8 maxPlayers)
+ {
++#if COOP_LINKED
++    // The link cable is busy with linked co-op: cable club features say "come again".
++    if (gCoopLinkActive)
++    {
++        CoopLink_RefuseLinkup();
++        return;
++    }
++#endif
+     if (FindTaskIdByFunc(Task_LinkupStart) == TASK_NONE)
+     {
+         u8 taskId1;

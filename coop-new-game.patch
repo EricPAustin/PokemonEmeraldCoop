@@ -1,0 +1,271 @@
+diff --git a/include/coop_link.h b/include/coop_link.h
+index 4d7839f3e..f27379a15 100644
+--- a/include/coop_link.h
++++ b/include/coop_link.h
+@@ -11,8 +11,9 @@
+ // Player 1 (first window) is the normal player character. Player 2 walks a
+ // second character, and Player 2's window draws the map around Player 2.
+ //
+-// Start it from the main menu: highlight CONTINUE and press SELECT on both GBAs.
+-// Both games must have the same save file.
++// Start it from the main menu on both GBAs: highlight CONTINUE and press SELECT
++// (both games must have the same save file), or highlight NEW GAME and press
++// SELECT to start a new adventure together.
+ //
+ // Set to FALSE to remove the feature entirely.
+ #define COOP_LINKED TRUE
+@@ -35,7 +36,10 @@ extern u32 gCoopTick;           // Frames simulated since the session started
+ extern u32 gCoopDesyncTick;     // Non-zero once a desync was detected
+ 
+ // Main menu
+-void CoopLink_StartFromMainMenu(void);
++#define COOP_START_CONTINUE 0
++#define COOP_START_NEW_GAME 1
++void CoopLink_StartFromMainMenu(u8 startMode);
++void CoopLink_StartNewGameIntro(void); // main_menu.c
+ 
+ // Main loop / interrupts
+ bool8 CoopLink_BeginTick(void);
+diff --git a/src/coop_link.c b/src/coop_link.c
+index 77016cf40..5d9e5e9a8 100644
+--- a/src/coop_link.c
++++ b/src/coop_link.c
+@@ -11,6 +11,9 @@
+ #include "link.h"
+ #include "m4a.h"
+ #include "main.h"
++#include "main_menu.h"
++#include "new_game.h"
++#include "load_save.h"
+ #include "malloc.h"
+ #include "menu.h"
+ #include "overworld.h"
+@@ -55,6 +58,14 @@ struct CoopSyncBlock
+     u32 saveHash;
+     u32 rngSeed;
+     struct SiiRtcInfo rtc;
++    u8 startMode;       // COOP_START_CONTINUE / COOP_START_NEW_GAME
++    u8 saveFileStatus;  // New game: Player 1's, so both ask the same "overwrite?" question when saving
++    u8 optionsButtonMode;
++    u8 optionsTextSpeed;
++    u8 optionsWindowFrameType;
++    u8 optionsSound;
++    u8 optionsBattleStyle;
++    u8 optionsBattleSceneOff;
+ };
+ 
+ bool8 gCoopLinkActive;
+@@ -90,6 +101,8 @@ struct CoopLinkState
+     u16 sendHashTick;
+     u32 sendHash;
+     bool8 errorShown;
++    u8 startMode;
++    struct CoopSyncBlock newGameSettings; // Player 1's sync block (options etc. for a new game)
+ };
+ 
+ static EWRAM_DATA struct CoopLinkState sCoop = {0};
+@@ -103,6 +116,7 @@ static void CheckRemoteHash(u16 tick, u32 hash);
+ 
+ static const u8 sText_Waiting[] = _("Co-op link\nWaiting for the other player...\n\nB: Cancel");
+ static const u8 sText_Syncing[] = _("Co-op link\nConnected! Syncing...");
++static const u8 sText_ModeMismatch[] = _("Both players must press SELECT\non the same option:\nCONTINUE or NEW GAME.\nA: Return to title");
+ static const u8 sText_SaveMismatch[] = _("The two save files don't match!\nCopy Player 1's save file over\nPlayer 2's and try again.\nA: Return to title");
+ static const u8 sText_LinkFailed[] = _("Co-op link failed.\n\n\nA: Return to title");
+ static const u8 sText_LinkLost[] = _("The co-op link was lost.\n\n\nA: Return to title");
+@@ -215,9 +229,10 @@ static void CoopScreen_Print(const u8 *text)
+     CopyWindowToVram(0, COPYWIN_FULL);
+ }
+ 
+-// Called by the main menu (SELECT on CONTINUE).
+-void CoopLink_StartFromMainMenu(void)
++// Called by the main menu: SELECT on CONTINUE or on NEW GAME.
++void CoopLink_StartFromMainMenu(u8 startMode)
+ {
++    sCoop.startMode = startMode;
+     gCoopLinkActive = FALSE;
+     gCoopDesyncTick = 0;
+     sCoop.errorShown = FALSE;
+@@ -341,6 +356,14 @@ static void Task_CoopLinkup(u8 taskId)
+         block->saveHash = HashSaveFlash();
+         block->rngSeed = gRngValue;
+         RtcGetInfo(&block->rtc);
++        block->startMode = sCoop.startMode;
++        block->saveFileStatus = gSaveFileStatus;
++        block->optionsButtonMode = gSaveBlock2Ptr->optionsButtonMode;
++        block->optionsTextSpeed = gSaveBlock2Ptr->optionsTextSpeed;
++        block->optionsWindowFrameType = gSaveBlock2Ptr->optionsWindowFrameType;
++        block->optionsSound = gSaveBlock2Ptr->optionsSound;
++        block->optionsBattleStyle = gSaveBlock2Ptr->optionsBattleStyle;
++        block->optionsBattleSceneOff = gSaveBlock2Ptr->optionsBattleSceneOff;
+         SendBlock(0, block, sizeof(*block));
+         task->tState++;
+         break;
+@@ -355,11 +378,19 @@ static void Task_CoopLinkup(u8 taskId)
+             LinkupFailed(taskId, sText_LinkFailed);
+             break;
+         }
+-        if (blocks[0]->saveHash != blocks[1]->saveHash || blocks[0]->saveHash == 0)
++        if (blocks[0]->startMode != blocks[1]->startMode)
++        {
++            LinkupFailed(taskId, sText_ModeMismatch);
++            break;
++        }
++        // Continuing needs the same save on both GBAs. A new game starts fresh.
++        if (blocks[0]->startMode == COOP_START_CONTINUE
++         && (blocks[0]->saveHash != blocks[1]->saveHash || blocks[0]->saveHash == 0))
+         {
+             LinkupFailed(taskId, sText_SaveMismatch);
+             break;
+         }
++        sCoop.newGameSettings = *blocks[0];
+         // Player 1's random seed and clock are used by both games.
+         sCoop.rngSeed = blocks[0]->rngSeed;
+         sCoop.baseRtc = blocks[0]->rtc;
+@@ -428,11 +459,55 @@ static void ShowCoopErrorScreen(const u8 *text)
+ }
+ 
+ // First frame simulated in lockstep, run by both games on the same frame.
++// New game: both games start from a blank save with Player 1's options, then
++// Professor Birch's introduction begins (Player 1 answers it).
++static void StartCoopNewGame(void)
++{
++    u16 imeBackup = REG_IME;
++    const struct CoopSyncBlock *settings = &sCoop.newGameSettings;
++    u16 linkType = gLinkType;
++    struct CoopLinkState state = sCoop;
++
++    REG_IME = 0;
++    RegisterRamReset(RESET_EWRAM);
++    ClearGpuRegBits(REG_OFFSET_DISPCNT, DISPCNT_FORCED_BLANK);
++    REG_IME = imeBackup;
++    sCoop = state;
++    gLinkType = linkType;
++    CoopLink_RestoreLinkOpen();
++
++    gMain.inBattle = FALSE;
++    SetSaveBlocksPointers(GetSaveBlocksPointersBaseOffset());
++    ResetMenuAndMonGlobals();
++    Save_ResetSaveCounters();
++    Sav2_ClearSetDefault();
++    gSaveBlock2Ptr->optionsButtonMode = settings->optionsButtonMode;
++    gSaveBlock2Ptr->optionsTextSpeed = settings->optionsTextSpeed;
++    gSaveBlock2Ptr->optionsWindowFrameType = settings->optionsWindowFrameType;
++    gSaveBlock2Ptr->optionsSound = settings->optionsSound;
++    gSaveBlock2Ptr->optionsBattleStyle = settings->optionsBattleStyle;
++    gSaveBlock2Ptr->optionsBattleSceneOff = settings->optionsBattleSceneOff;
++    gSaveFileStatus = settings->saveFileStatus;
++    SetPokemonCryStereo(gSaveBlock2Ptr->optionsSound);
++    InitHeap(gHeap, HEAP_SIZE);
++    CoopLink_StartNewGameIntro();
++}
++
+ static void CB2_CoopFirstTick(void)
+ {
+     u16 linkType = gLinkType;
+     struct CoopLinkState state = sCoop;
+ 
++    if (sCoop.startMode == COOP_START_NEW_GAME)
++    {
++        gRngValue = sCoop.rngSeed;
++        gRng2Value = sCoop.rngSeed ^ 0x5A5A5A5A;
++        gMain.vblankCounter1 = 0;
++        gMain.vblankCounter2 = 0;
++        StartCoopNewGame();
++        return;
++    }
++
+     // Everything the game logic reads must start out the same on both GBAs.
+     gRngValue = sCoop.rngSeed;
+     gRng2Value = sCoop.rngSeed ^ 0x5A5A5A5A;
+diff --git a/src/main.c b/src/main.c
+index d346459be..014c69a6b 100644
+--- a/src/main.c
++++ b/src/main.c
+@@ -227,6 +227,11 @@ void StartTimer1(void)
+ void SeedRngAndSetTrainerId(void)
+ {
+     u16 val = REG_TM1CNT_L;
++
++    // Linked co-op: a hardware timer differs between the GBAs; use the shared
++    // random numbers instead so both games pick the same trainer ID.
++    if (gCoopLinkActive)
++        val = Random();
+     SeedRng(val);
+     REG_TM1CNT_H = 0;
+     sTrainerId = val;
+diff --git a/src/main_menu.c b/src/main_menu.c
+index 05673275b..c6fa8b23f 100644
+--- a/src/main_menu.c
++++ b/src/main_menu.c
+@@ -555,6 +555,8 @@ void CB2_ReinitMainMenu(void)
+     InitMainMenu(TRUE);
+ }
+ 
++static bool8 sCoopNewGame;
++
+ static u32 InitMainMenu(bool8 returningFromOptionsMenu)
+ {
+     SetVBlankCallback(NULL);
+@@ -570,7 +572,7 @@ static u32 InitMainMenu(bool8 returningFromOptionsMenu)
+     SetGpuReg(REG_OFFSET_BG0HOFS, 0);
+     SetGpuReg(REG_OFFSET_BG0VOFS, 0);
+ 
+-    DmaFill16(3, 0, (void *)VRAM, VRAM_SIZE);
++    DmaFillLarge16(3, 0, (void *)VRAM, VRAM_SIZE, 0x1000); // Chunked: keeps the link cable interrupt responsive
+     DmaFill32(3, 0, (void *)OAM, OAM_SIZE);
+     DmaFill16(3, 0, (void *)(PLTT + 2), PLTT_SIZE - 2);
+ 
+@@ -609,11 +611,23 @@ static u32 InitMainMenu(bool8 returningFromOptionsMenu)
+     SetGpuReg(REG_OFFSET_DISPCNT, DISPCNT_WIN0_ON | DISPCNT_OBJ_ON | DISPCNT_OBJ_1D_MAP);
+     ShowBg(0);
+     HideBg(1);
+-    CreateTask(Task_MainMenuCheckSaveFile, 0);
++    if (!sCoopNewGame)
++        CreateTask(Task_MainMenuCheckSaveFile, 0);
+ 
+     return 0;
+ }
+ 
++// Linked co-op: starts Professor Birch's introduction directly, on both GBAs.
++void CoopLink_StartNewGameIntro(void)
++{
++    sCoopNewGame = TRUE;
++    InitMainMenu(FALSE);
++    sCoopNewGame = FALSE;
++    gPlttBufferUnfaded[0] = RGB_BLACK;
++    gPlttBufferFaded[0] = RGB_BLACK;
++    CreateTask(Task_NewGameBirchSpeech_Init, 0);
++}
++
+ #define tMenuType data[0]
+ #define tCurrItem data[1]
+ #define tItemCount data[12]
+@@ -886,14 +900,16 @@ static bool8 HandleMainMenuInput(u8 taskId)
+ {
+     s16 *data = gTasks[taskId].data;
+ 
+-    if (COOP_LINKED && JOY_NEW(SELECT_BUTTON) && tMenuType != HAS_NO_SAVED_GAME && tCurrItem == 0)
++    // Linked co-op: SELECT on CONTINUE or NEW GAME (on both GBAs)
++    if (COOP_LINKED && JOY_NEW(SELECT_BUTTON)
++     && ((tMenuType != HAS_NO_SAVED_GAME && tCurrItem <= 1) || (tMenuType == HAS_NO_SAVED_GAME && tCurrItem == 0)))
+     {
+-        // Linked co-op: SELECT on CONTINUE (on both GBAs)
++        u8 startMode = (tMenuType != HAS_NO_SAVED_GAME && tCurrItem == 0) ? COOP_START_CONTINUE : COOP_START_NEW_GAME;
+         PlaySE(SE_SELECT);
+         if (tMenuType == HAS_MYSTERY_EVENTS)
+             RemoveScrollIndicatorArrowPair(tScrollArrowTaskId);
+         DestroyTask(taskId);
+-        CoopLink_StartFromMainMenu();
++        CoopLink_StartFromMainMenu(startMode);
+         return FALSE;
+     }
+     if (JOY_NEW(A_BUTTON))
+@@ -1816,7 +1832,7 @@ static void CB2_NewGameBirchSpeech_ReturnFromNamingScreen(void)
+     SetGpuReg(REG_OFFSET_BG1VOFS, 0);
+     SetGpuReg(REG_OFFSET_BG0HOFS, 0);
+     SetGpuReg(REG_OFFSET_BG0VOFS, 0);
+-    DmaFill16(3, 0, VRAM, VRAM_SIZE);
++    DmaFillLarge16(3, 0, (void *)VRAM, VRAM_SIZE, 0x1000); // Chunked: keeps the link cable interrupt responsive
+     DmaFill32(3, 0, OAM, OAM_SIZE);
+     DmaFill16(3, 0, PLTT, PLTT_SIZE);
+     ResetPaletteFade();

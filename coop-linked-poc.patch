@@ -1,0 +1,330 @@
+diff --git a/include/coop_link.h b/include/coop_link.h
+new file mode 100644
+index 0000000..2a19e04
+--- /dev/null
++++ b/include/coop_link.h
+@@ -0,0 +1,23 @@
++#ifndef GUARD_COOP_LINK_H
++#define GUARD_COOP_LINK_H
++
++// PROOF OF CONCEPT: two linked GBAs (e.g. two mGBA multiplayer windows) walking
++// around the same map, each with its own camera. Both games exchange their
++// button presses every frame over the link cable and move both players
++// identically (lockstep), reusing Emerald's Cable Club link overworld.
++//
++// Set to FALSE to remove the feature entirely.
++#define COOP_LINKED_POC TRUE
++
++// Max distance (in tiles) the two players may be apart. Movement that would
++// exceed it is blocked, so nobody can leave the other player's screen.
++#define COOP_TETHER_X 7
++#define COOP_TETHER_Y 4
++
++extern bool8 gCoopLinkActive;
++
++void CoopLink_Start(void);
++bool8 CoopLink_GetCollision(u8 selfObjEventId, s16 x, s16 y);
++void CoopLink_FreezeNPCs(void);
++
++#endif // GUARD_COOP_LINK_H
+diff --git a/ld_script.ld b/ld_script.ld
+index d87b01a..0e9c1c8 100644
+--- a/ld_script.ld
++++ b/ld_script.ld
+@@ -92,6 +92,7 @@ SECTIONS {
+         src/battle_script_commands.o(.text);
+         src/battle_util2.o(.text);
+         src/coop.o(.text);
++        src/coop_link.o(.text);
+         src/battle_controller_player.o(.text);
+         src/battle_gfx_sfx_util.o(.text);
+         src/battle_controller_opponent.o(.text);
+@@ -480,6 +481,7 @@ SECTIONS {
+         src/battle_main.o(.rodata);
+         src/battle_util.o(.rodata);
+         src/coop.o(.rodata);
++        src/coop_link.o(.rodata);
+         src/battle_script_commands.o(.rodata);
+         src/battle_controller_player.o(.rodata);
+         src/battle_anim_smokescreen.o(.rodata);
+diff --git a/src/coop_link.c b/src/coop_link.c
+new file mode 100644
+index 0000000..59aab29
+--- /dev/null
++++ b/src/coop_link.c
+@@ -0,0 +1,222 @@
++#include "global.h"
++#include "coop_link.h"
++#include "event_data.h"
++#include "event_object_movement.h"
++#include "field_message_box.h"
++#include "field_player_avatar.h"
++#include "field_weather.h"
++#include "fieldmap.h"
++#include "link.h"
++#include "main.h"
++#include "overworld.h"
++#include "palette.h"
++#include "script.h"
++#include "sound.h"
++#include "task.h"
++#include "constants/maps.h"
++#include "constants/songs.h"
++#include "constants/field_weather.h"
++
++#define LINKTYPE_COOP 0x7711
++
++// Where both players appear once linked (Route 101, next to each other).
++#define COOP_LINK_MAP  MAP_ROUTE101
++#define COOP_LINK_X    10
++#define COOP_LINK_Y    10
++
++EWRAM_DATA bool8 gCoopLinkActive = FALSE;
++
++static const u8 sText_CoopLinkWaiting[] = _("Co-op link: waiting for\nthe other player…");
++static const u8 sText_CoopLinkFailed[] = _("Co-op link failed.");
++
++enum {
++    STATE_OPEN,
++    STATE_WAIT_PLAYERS,
++    STATE_CONFIRM,
++    STATE_EXCHANGE,
++    STATE_FADE,
++    STATE_WARP,
++    STATE_FAILED,
++    STATE_FAILED_WAIT,
++};
++
++#define tState data[0]
++#define tTimer data[1]
++
++static void Task_CoopLinkup(u8 taskId)
++{
++    struct Task *task = &gTasks[taskId];
++
++    if (task->tState != STATE_FAILED && task->tState != STATE_FAILED_WAIT
++     && task->tState >= STATE_WAIT_PLAYERS && HasLinkErrorOccurred())
++        task->tState = STATE_FAILED;
++
++    switch (task->tState)
++    {
++    case STATE_OPEN:
++        gLinkType = LINKTYPE_COOP;
++        OpenLinkTimed();
++        ResetLinkPlayerCount();
++        ResetLinkPlayers();
++        ShowFieldAutoScrollMessage(sText_CoopLinkWaiting);
++        task->tTimer = 0;
++        task->tState++;
++        break;
++    case STATE_WAIT_PLAYERS:
++        if (++task->tTimer < 10)
++            break;
++        if (GetLinkPlayerCount_2() >= 2)
++        {
++            task->tTimer = 0;
++            task->tState++;
++        }
++        break;
++    case STATE_CONFIRM:
++        // Give the link a moment to settle, then the master confirms for everyone.
++        if (++task->tTimer < 30)
++            break;
++        if (IsLinkMaster())
++        {
++            SaveLinkPlayers(GetLinkPlayerCount_2());
++            CheckShouldAdvanceLinkState();
++        }
++        task->tState++;
++        break;
++    case STATE_EXCHANGE:
++        switch (GetLinkPlayerDataExchangeStatusTimed(2, 2))
++        {
++        case EXCHANGE_COMPLETE:
++            gFieldLinkPlayerCount = GetLinkPlayerCount_2();
++            gLocalLinkPlayerId = GetMultiplayerId();
++            SaveLinkPlayers(gFieldLinkPlayerCount);
++            gCoopLinkActive = TRUE;
++            HideFieldMessageBox();
++            FadeScreen(FADE_TO_BLACK, 0);
++            task->tState = STATE_FADE;
++            break;
++        case EXCHANGE_DIFF_SELECTIONS:
++        case EXCHANGE_PLAYER_NOT_READY:
++        case EXCHANGE_PARTNER_NOT_READY:
++        case EXCHANGE_WRONG_NUM_PLAYERS:
++            task->tState = STATE_FAILED;
++            break;
++        }
++        break;
++    case STATE_FADE:
++        if (!gPaletteFade.active)
++            task->tState++;
++        break;
++    case STATE_WARP:
++        SetWarpDestination(MAP_GROUP(COOP_LINK_MAP), MAP_NUM(COOP_LINK_MAP), WARP_ID_NONE, COOP_LINK_X, COOP_LINK_Y);
++        WarpIntoMap();
++        SetMainCallback2(CB2_ReturnToFieldCableClub);
++        DestroyTask(taskId);
++        break;
++    case STATE_FAILED:
++        CloseLink();
++        gCoopLinkActive = FALSE;
++        ShowFieldAutoScrollMessage(sText_CoopLinkFailed);
++        task->tTimer = 0;
++        task->tState++;
++        break;
++    case STATE_FAILED_WAIT:
++        if (++task->tTimer > 120)
++        {
++            HideFieldMessageBox();
++            UnlockPlayerFieldControls();
++            DestroyTask(taskId);
++        }
++        break;
++    }
++}
++
++#undef tState
++#undef tTimer
++
++void CoopLink_Start(void)
++{
++    if (FuncIsActiveTask(Task_CoopLinkup))
++        return;
++    LockPlayerFieldControls();
++    FreezeObjectEvents();
++    PlaySE(SE_PIN);
++    CreateTask(Task_CoopLinkup, 80);
++}
++
++static bool8 IsCoordOutsideMap(s16 x, s16 y)
++{
++    return x < MAP_OFFSET || y < MAP_OFFSET
++        || x >= MAP_OFFSET + gMapHeader.mapLayout->width
++        || y >= MAP_OFFSET + gMapHeader.mapLayout->height;
++}
++
++static bool8 IsOtherLinkPlayerObj(u8 objEventId, u8 selfObjEventId)
++{
++    s32 i;
++    for (i = 0; i < MAX_LINK_PLAYERS; i++)
++    {
++        if (gLinkPlayerObjectEvents[i].active
++         && gLinkPlayerObjectEvents[i].objEventId == objEventId
++         && objEventId != selfObjEventId)
++            return TRUE;
++    }
++    return FALSE;
++}
++
++// Collision for linked co-op. Both games must reach exactly the same answer, so
++// this only looks at data that is identical on both sides: the map, the other
++// linked players and the map's NPC templates (NPCs are frozen in place, and
++// which NPC sprites exist depends on each player's camera).
++bool8 CoopLink_GetCollision(u8 selfObjEventId, s16 x, s16 y)
++{
++    s32 i;
++
++    if (IsCoordOutsideMap(x, y))
++        return TRUE;
++
++    for (i = 0; i < OBJECT_EVENTS_COUNT; i++)
++    {
++        struct ObjectEvent *obj = &gObjectEvents[i];
++        if (!obj->active || !IsOtherLinkPlayerObj(i, selfObjEventId))
++            continue;
++        if ((obj->currentCoords.x == x && obj->currentCoords.y == y)
++         || (obj->previousCoords.x == x && obj->previousCoords.y == y))
++            return TRUE;
++        // Tether: never move further than this from the other player.
++        if (x - obj->currentCoords.x > COOP_TETHER_X || obj->currentCoords.x - x > COOP_TETHER_X
++         || y - obj->currentCoords.y > COOP_TETHER_Y || obj->currentCoords.y - y > COOP_TETHER_Y)
++            return TRUE;
++    }
++
++    for (i = 0; i < gMapHeader.events->objectEventCount && i < OBJECT_EVENT_TEMPLATES_COUNT; i++)
++    {
++        const struct ObjectEventTemplate *template = &gSaveBlock1Ptr->objectEventTemplates[i];
++        if (template->flagId != 0 && FlagGet(template->flagId))
++            continue;
++        if (template->x + MAP_OFFSET == x && template->y + MAP_OFFSET == y)
++            return TRUE;
++    }
++
++    return MapGridGetCollisionAt(x, y);
++}
++
++// NPCs stay where the map places them, so every game agrees on where they are.
++void CoopLink_FreezeNPCs(void)
++{
++    s32 i, j;
++
++    for (i = 0; i < OBJECT_EVENTS_COUNT; i++)
++    {
++        bool8 isLinkPlayer = FALSE;
++
++        if (!gObjectEvents[i].active || gObjectEvents[i].frozen)
++            continue;
++        for (j = 0; j < MAX_LINK_PLAYERS; j++)
++        {
++            if (gLinkPlayerObjectEvents[j].active && gLinkPlayerObjectEvents[j].objEventId == i)
++                isLinkPlayer = TRUE;
++        }
++        if (!isLinkPlayer)
++            FreezeObjectEvent(&gObjectEvents[i]);
++    }
++}
+diff --git a/src/field_control_avatar.c b/src/field_control_avatar.c
+index ed96a87..25fc74b 100644
+--- a/src/field_control_avatar.c
++++ b/src/field_control_avatar.c
+@@ -1,4 +1,5 @@
+ #include "global.h"
++#include "coop_link.h"
+ #include "battle_setup.h"
+ #include "bike.h"
+ #include "coord_event_weather.h"
+@@ -185,6 +186,12 @@ int ProcessPlayerFieldInput(struct FieldInput *input)
+         ShowStartMenu();
+         return TRUE;
+     }
++    // Co-op link proof of concept: SELECT (with no registered item) starts the link.
++    if (COOP_LINKED_POC && input->pressedSelectButton && gSaveBlock1Ptr->registeredItem == ITEM_NONE)
++    {
++        CoopLink_Start();
++        return TRUE;
++    }
+     if (input->pressedSelectButton && UseRegisteredKeyItemOnField() == TRUE)
+         return TRUE;
+ 
+diff --git a/src/overworld.c b/src/overworld.c
+index 1d6b81c..c2486fe 100644
+--- a/src/overworld.c
++++ b/src/overworld.c
+@@ -1,4 +1,5 @@
+ #include "global.h"
++#include "coop_link.h"
+ #include "overworld.h"
+ #include "battle_pyramid.h"
+ #include "battle_setup.h"
+@@ -2238,6 +2239,9 @@ static void CreateLinkPlayerSprites(void)
+ 
+ static void CB1_OverworldLink(void)
+ {
++    if (COOP_LINKED_POC && gCoopLinkActive)
++        CoopLink_FreezeNPCs();
++
+     if (gWirelessCommType == 0 || !IsRfuRecvQueueEmpty() || !IsSendingKeysToLink())
+     {
+         u8 selfId = gLocalLinkPlayerId;
+@@ -3150,6 +3154,9 @@ static u8 FlipVerticalAndClearForced(u8 newFacing, u8 oldFacing)
+ static u8 LinkPlayerGetCollision(u8 selfObjEventId, u8 direction, s16 x, s16 y)
+ {
+     u8 i;
++
++    if (COOP_LINKED_POC && gCoopLinkActive)
++        return CoopLink_GetCollision(selfObjEventId, x, y);
+     for (i = 0; i < OBJECT_EVENTS_COUNT; i++)
+     {
+         if (i != selfObjEventId)
