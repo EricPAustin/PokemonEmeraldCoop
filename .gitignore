@@ -5,6 +5,9 @@
 *.sa2
 *.ss[0-9]
 
+# agbcc compiler source (each person clones and builds it; see CLAUDE.md)
+pokeemerald-master/agbcc/
+
 # Leftovers from applying patches
 *.rej
 *.orig

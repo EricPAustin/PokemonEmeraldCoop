@@ -18,7 +18,7 @@ For how the co-op works in detail (controls, saving, error messages, testing don
 
 ## Repo layout
 - `pokeemerald-master/pokeemerald-master/`: the game source, with every patch already applied. Build here.
-- `pokeemerald-master/agbcc/`: empty placeholder (agbcc is installed separately; see the decomp's `INSTALL.md`).
+- `pokeemerald-master/agbcc/`: the agbcc compiler source (not in git). Each person clones and builds it once; see Build & play.
 - `*.patch` at the root: history of the co-op work as diffs. `coop-full-from-vanilla.patch` is the whole thing against vanilla pret/pokeemerald. These are reference only; do not reapply them to the source folder (that is what produced the `.rej` files that were cleaned up).
 - Main co-op code: `src/coop.c`, `src/coop_link.c`, `src/coop_player2.c`, `include/coop_link.h`.
 
@@ -36,6 +36,7 @@ For how the co-op works in detail (controls, saving, error messages, testing don
 - P1's starter fights the first Zigzagoon alone (scripted single battle).
 
 ## Known risk areas
+- **Save space is almost full** (build output, 2026-10-23): SaveBlock1 15752/15872 B (99.2%, ~120 B free), SaveBlock2 3884/3968 B (97.9%), PokemonStorage 94.5%. Any new saved data (casino, new flags/vars beyond spare ones, P2 stats) must reuse existing space or free some first. The build fails if a block overflows.
 - **Desyncs:** anything that reads hardware timers, uninitialised memory, or does long DMA/VRAM clears can break lockstep. Large clears must be chunked so the link interrupt keeps running.
 - Battle edge cases where code assumes a single player: Pickup, Pay Day, Exp. Share, money on win/loss, whiteout.
 - **Two-PC play:** not yet tested. Needs mGBA link play across two computers on the home network (vs. one PC + Parsec).
@@ -49,6 +50,13 @@ For how the co-op works in detail (controls, saving, error messages, testing don
 - Aseprite / LibreSprite / Pixelorama: sprites (16-color palettes)
 
 ## Build & play
+One-time setup (WSL Ubuntu):
+```
+sudo apt update && sudo apt install -y build-essential binutils-arm-none-eabi git libpng-dev
+cd pokeemerald-master && git clone https://github.com/pret/agbcc && cd agbcc
+./build.sh && ./install.sh ../pokeemerald-master
+```
+Then each time:
 1. In WSL, from `pokeemerald-master/pokeemerald-master`: `make -j$(nproc)`
 2. mGBA: load `pokeemerald.gba`, then File → New multiplayer window, load the same ROM, one controller per window.
 3. Both windows: pick NEW GAME or CONTINUE with A, wait for "Co-op link: waiting for the other player...".
@@ -70,8 +78,9 @@ For how the co-op works in detail (controls, saving, error messages, testing don
 ## Status
 - Co-op is playable from NEW GAME through at least Route 102/103 per the testing notes.
 - 2026-10-23: reviewed repo against the original plan, rewrote this file to match what's built, removed 20 leftover `.rej` files (all hunks verified as already applied or superseded), added `.gitignore`.
+- 2026-10-23: clean build on Declan's PC (WSL Ubuntu, agbcc), `pokeemerald.gba` produced.
 - Next:
-  1. Get a clean build on Declan's PC (WSL toolchain).
+  1. Playtest the build in two linked mGBA windows.
   2. Test linking across two PCs on the home network.
   3. P2's trainer sprite in battle.
   4. Wild double battles.
