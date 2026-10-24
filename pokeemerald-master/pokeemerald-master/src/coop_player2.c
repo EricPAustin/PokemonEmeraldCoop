@@ -201,7 +201,7 @@ static void PlaceP2NearP1(struct ObjectEvent *p2)
 static void SpawnP2(void)
 {
     struct ObjectEvent *p1 = GetPlayer1();
-    u8 graphicsId = GetRivalAvatarGraphicsIdByStateIdAndGender(PLAYER_AVATAR_STATE_NORMAL, gSaveBlock2Ptr->playerGender ^ 1);
+    u8 graphicsId = GetRivalAvatarGraphicsIdByStateIdAndGender(PLAYER_AVATAR_STATE_NORMAL, Coop_GetPlayer2Gender());
     u8 objEventId = SpawnSpecialObjectEventParameterized(graphicsId, MOVEMENT_TYPE_PLAYER, LOCALID_COOP_PLAYER2,
                                                           p1->currentCoords.x, p1->currentCoords.y, p1->currentElevation);
 

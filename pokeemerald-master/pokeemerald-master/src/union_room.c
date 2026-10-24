@@ -3297,9 +3297,14 @@ void InitUnionRoom(void)
     struct WirelessLink_URoom *data;
 
 #if COOP_LINKED
-    // Runs in every Pokémon Center to look for wireless players. Off in linked co-op.
+    // Runs in every Pokémon Center to look for wireless players. Off in linked co-op,
+    // but the name must still be cleared, or the nurse says an empty "player" is
+    // waiting in the Union Room (see BufferUnionRoomPlayerName).
     if (gCoopLinkActive)
+    {
+        sUnionRoomPlayerName[0] = EOS;
         return;
+    }
 #endif
 
     sUnionRoomPlayerName[0] = EOS;
@@ -3385,6 +3390,8 @@ static void Task_InitUnionRoom(u8 taskId)
 
 bool16 BufferUnionRoomPlayerName(void)
 {
+    if (COOP_LINKED && gCoopLinkActive)
+        return FALSE; // No wireless players during linked co-op
     if (sUnionRoomPlayerName[0] != EOS)
     {
         StringCopy(gStringVar1, sUnionRoomPlayerName);

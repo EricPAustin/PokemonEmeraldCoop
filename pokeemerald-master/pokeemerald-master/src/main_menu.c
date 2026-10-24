@@ -1,4 +1,5 @@
 #include "global.h"
+#include "coop.h"
 #include "coop_link.h"
 #include "trainer_pokemon_sprites.h"
 #include "bg.h"
@@ -225,7 +226,7 @@ static void Task_NewGameBirchSpeech_WaitForWhatsYourNameToPrint(u8);
 static void Task_NewGameBirchSpeech_WaitPressBeforeNameChoice(u8);
 static void Task_NewGameBirchSpeech_StartNamingScreen(u8);
 static void CB2_NewGameBirchSpeech_ReturnFromNamingScreen(void);
-static void NewGameBirchSpeech_SetDefaultPlayerName(u8);
+static void NewGameBirchSpeech_SetDefaultPlayerName(u8, u8 *, u8);
 static void Task_NewGameBirchSpeech_CreateNameYesNo(u8);
 static void Task_NewGameBirchSpeech_ProcessNameYesNoMenu(u8);
 void CreateYesNoMenuParameterized(u8, u8, u16, u16, u8, u8);
@@ -556,6 +557,12 @@ void CB2_ReinitMainMenu(void)
 }
 
 static bool8 sCoopNewGame;
+// Co-op: after Player 1 confirms their name, Birch asks Player 2 for their
+// gender and name too, with Player 2's buttons (see Task_NewGameBirchSpeech_ProcessNameYesNoMenu).
+static bool8 sCoopNamingP2;
+
+static const u8 sText_CoopBirch_Player2BoyOrGirl[] = _("And now, PLAYER 2! Are you a boy?\nOr are you a girl?");
+static const u8 sText_CoopBirch_SoItsPlayer2[] = _("So it's {STR_VAR_1}?");
 
 static u32 InitMainMenu(bool8 returningFromOptionsMenu)
 {
@@ -1292,6 +1299,7 @@ static void HighlightSelectedMainMenuItem(u8 menuType, u8 selectedMenuItem, s16 
 
 static void Task_NewGameBirchSpeech_Init(u8 taskId)
 {
+    sCoopNamingP2 = FALSE;
     SetGpuReg(REG_OFFSET_DISPCNT, 0);
     SetGpuReg(REG_OFFSET_DISPCNT, DISPCNT_OBJ_ON | DISPCNT_OBJ_1D_MAP);
     InitBgFromTemplate(&sBirchBgTemplate);
@@ -1512,7 +1520,7 @@ static void Task_NewGameBirchSpeech_WaitForPlayerFadeIn(u8 taskId)
 static void Task_NewGameBirchSpeech_BoyOrGirl(u8 taskId)
 {
     NewGameBirchSpeech_ClearWindow(0);
-    StringExpandPlaceholders(gStringVar4, gText_Birch_BoyOrGirl);
+    StringExpandPlaceholders(gStringVar4, sCoopNamingP2 ? sText_CoopBirch_Player2BoyOrGirl : gText_Birch_BoyOrGirl);
     AddTextPrinterForMessage(TRUE);
     gTasks[taskId].func = Task_NewGameBirchSpeech_WaitToShowGenderMenu;
 }
@@ -1535,13 +1543,19 @@ static void Task_NewGameBirchSpeech_ChooseGender(u8 taskId)
     {
         case MALE:
             PlaySE(SE_SELECT);
-            gSaveBlock2Ptr->playerGender = gender;
+            if (sCoopNamingP2)
+                gSaveBlock2Ptr->coopP2Gender = gender;
+            else
+                gSaveBlock2Ptr->playerGender = gender;
             NewGameBirchSpeech_ClearGenderWindow(1, 1);
             gTasks[taskId].func = Task_NewGameBirchSpeech_WhatsYourName;
             break;
         case FEMALE:
             PlaySE(SE_SELECT);
-            gSaveBlock2Ptr->playerGender = gender;
+            if (sCoopNamingP2)
+                gSaveBlock2Ptr->coopP2Gender = gender;
+            else
+                gSaveBlock2Ptr->playerGender = gender;
             NewGameBirchSpeech_ClearGenderWindow(1, 1);
             gTasks[taskId].func = Task_NewGameBirchSpeech_WhatsYourName;
             break;
@@ -1628,16 +1642,32 @@ static void Task_NewGameBirchSpeech_StartNamingScreen(u8 taskId)
     {
         FreeAllWindowBuffers();
         FreeAndDestroyMonPicSprite(gTasks[taskId].tLotadSpriteId);
-        NewGameBirchSpeech_SetDefaultPlayerName(Random() % NUM_PRESET_NAMES);
         DestroyTask(taskId);
-        DoNamingScreen(NAMING_SCREEN_PLAYER, gSaveBlock2Ptr->playerName, gSaveBlock2Ptr->playerGender, 0, 0, CB2_NewGameBirchSpeech_ReturnFromNamingScreen);
+        if (sCoopNamingP2)
+        {
+            NewGameBirchSpeech_SetDefaultPlayerName(Random() % NUM_PRESET_NAMES, gSaveBlock2Ptr->coopP2Name, gSaveBlock2Ptr->coopP2Gender);
+            DoNamingScreen(NAMING_SCREEN_PLAYER, gSaveBlock2Ptr->coopP2Name, gSaveBlock2Ptr->coopP2Gender, 0, 0, CB2_NewGameBirchSpeech_ReturnFromNamingScreen);
+        }
+        else
+        {
+            NewGameBirchSpeech_SetDefaultPlayerName(Random() % NUM_PRESET_NAMES, gSaveBlock2Ptr->playerName, gSaveBlock2Ptr->playerGender);
+            DoNamingScreen(NAMING_SCREEN_PLAYER, gSaveBlock2Ptr->playerName, gSaveBlock2Ptr->playerGender, 0, 0, CB2_NewGameBirchSpeech_ReturnFromNamingScreen);
+        }
     }
 }
 
 static void Task_NewGameBirchSpeech_SoItsPlayerName(u8 taskId)
 {
     NewGameBirchSpeech_ClearWindow(0);
-    StringExpandPlaceholders(gStringVar4, gText_Birch_SoItsPlayer);
+    if (sCoopNamingP2)
+    {
+        StringCopy(gStringVar1, gSaveBlock2Ptr->coopP2Name);
+        StringExpandPlaceholders(gStringVar4, sText_CoopBirch_SoItsPlayer2);
+    }
+    else
+    {
+        StringExpandPlaceholders(gStringVar4, gText_Birch_SoItsPlayer);
+    }
     AddTextPrinterForMessage(TRUE);
     gTasks[taskId].func = Task_NewGameBirchSpeech_CreateNameYesNo;
 }
@@ -1657,6 +1687,20 @@ static void Task_NewGameBirchSpeech_ProcessNameYesNoMenu(u8 taskId)
     {
         case 0:
             PlaySE(SE_SELECT);
+            if (COOP_ENABLED && !sCoopNamingP2)
+            {
+                // Player 1 is done: now Player 2 picks a gender and a name.
+                sCoopNamingP2 = TRUE;
+                gCoopInputOwner = COOP_PLAYER_2;
+                gTasks[taskId].func = Task_NewGameBirchSpeech_BoyOrGirl;
+                break;
+            }
+            if (sCoopNamingP2)
+            {
+                Coop_SetPlayer2Named(gSaveBlock2Ptr->coopP2Gender);
+                sCoopNamingP2 = FALSE;
+                gCoopInputOwner = COOP_PLAYER_1;
+            }
             gSprites[gTasks[taskId].tPlayerSpriteId].oam.objMode = ST_OAM_OBJ_BLEND;
             NewGameBirchSpeech_StartFadeOutTarget1InTarget2(taskId, 2);
             NewGameBirchSpeech_StartFadePlatformIn(taskId, 1);
@@ -1850,7 +1894,7 @@ static void CB2_NewGameBirchSpeech_ReturnFromNamingScreen(void)
     FreeAllSpritePalettes();
     ResetAllPicSprites();
     AddBirchSpeechObjects(taskId);
-    if (gSaveBlock2Ptr->playerGender != MALE)
+    if ((sCoopNamingP2 ? gSaveBlock2Ptr->coopP2Gender : gSaveBlock2Ptr->playerGender) != MALE)
     {
         gTasks[taskId].tPlayerGender = FEMALE;
         spriteId = gTasks[taskId].tMaySpriteId;
@@ -2127,18 +2171,18 @@ static s8 NewGameBirchSpeech_ProcessGenderMenuInput(void)
     return Menu_ProcessInputNoWrap();
 }
 
-static void NewGameBirchSpeech_SetDefaultPlayerName(u8 nameId)
+static void NewGameBirchSpeech_SetDefaultPlayerName(u8 nameId, u8 *dest, u8 gender)
 {
     const u8 *name;
     u8 i;
 
-    if (gSaveBlock2Ptr->playerGender == MALE)
+    if (gender == MALE)
         name = sMalePresetNames[nameId];
     else
         name = sFemalePresetNames[nameId];
     for (i = 0; i < PLAYER_NAME_LENGTH; i++)
-        gSaveBlock2Ptr->playerName[i] = name[i];
-    gSaveBlock2Ptr->playerName[PLAYER_NAME_LENGTH] = EOS;
+        dest[i] = name[i];
+    dest[PLAYER_NAME_LENGTH] = EOS;
 }
 
 static void CreateMainMenuErrorWindow(const u8 *str)

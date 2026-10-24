@@ -15,6 +15,7 @@
 #include "sound.h"
 #include "sprite.h"
 #include "starter_choose.h"
+#include "string_util.h"
 #include "strings.h"
 #include "task.h"
 #include "text.h"
@@ -472,14 +473,24 @@ static void CB2_StarterChoose(void)
     UpdatePaletteFade();
 }
 
-static const u8 sText_CoopPlayer2Starter[] = _("Player 2, choose your POKéMON\nand help out too!");
+static const u8 sText_CoopPlayer1Starter[] = _("{STR_VAR_1}, choose your POKéMON\nand rescue PROF. BIRCH!");
+static const u8 sText_CoopPlayer2Starter[] = _("{STR_VAR_1}, choose your POKéMON\nand help out too!");
 
 static void Task_StarterChoose(u8 taskId)
 {
     CreateStarterPokemonLabel(gTasks[taskId].tStarterSelection);
     DrawStdFrameWithCustomTileAndPalette(0, FALSE, 0x2A8, 0xD);
-    // Co-op: Player 2 picks a starter right after Player 1.
-    AddTextPrinterParameterized(0, FONT_NORMAL, gCoopChoosingPlayer2Starter ? sText_CoopPlayer2Starter : gText_BirchInTrouble, 0, 1, 0, NULL);
+    // Co-op: Player 1 picks first, then Player 2. Say whose turn it is.
+    if (COOP_ENABLED)
+    {
+        Coop_CopyPlayerName(gStringVar1, gCoopChoosingPlayer2Starter ? COOP_PLAYER_2 : COOP_PLAYER_1);
+        StringExpandPlaceholders(gStringVar4, gCoopChoosingPlayer2Starter ? sText_CoopPlayer2Starter : sText_CoopPlayer1Starter);
+        AddTextPrinterParameterized(0, FONT_NORMAL, gStringVar4, 0, 1, 0, NULL);
+    }
+    else
+    {
+        AddTextPrinterParameterized(0, FONT_NORMAL, gText_BirchInTrouble, 0, 1, 0, NULL);
+    }
     PutWindowTilemap(0);
     ScheduleBgCopyTilemapToVram(0);
     gTasks[taskId].func = Task_HandleStarterChooseInput;

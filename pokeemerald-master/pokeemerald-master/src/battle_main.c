@@ -3443,7 +3443,8 @@ static void BattleIntroDrawTrainersOrMonsSprites(void)
             gBattleMons[gActiveBattler].status2 = 0;
         }
 
-        if (GetBattlerPosition(gActiveBattler) == B_POSITION_PLAYER_LEFT)
+        if (GetBattlerPosition(gActiveBattler) == B_POSITION_PLAYER_LEFT
+         || (IsCoopBattle() && GetBattlerPosition(gActiveBattler) == B_POSITION_PLAYER_RIGHT)) // Co-op: Player 2's trainer too
         {
             BtlController_EmitDrawTrainerPic(B_COMM_TO_CONTROLLER);
             MarkBattlerForControllerExec(gActiveBattler);
@@ -3821,7 +3822,7 @@ static void BattleIntroPlayer1SendsOutMonAnimation(void)
         {
             BtlController_EmitIntroTrainerBallThrow(B_COMM_TO_CONTROLLER);
             MarkBattlerForControllerExec(gActiveBattler);
-            if (gBattleTypeFlags & (BATTLE_TYPE_MULTI))
+            if ((gBattleTypeFlags & (BATTLE_TYPE_MULTI)) || IsCoopBattle()) // Co-op: Player 2 throws their own
             {
                 gBattleMainFunc = BattleIntroPlayer2SendsOutMonAnimation;
                 return;

@@ -120,6 +120,7 @@ static void StartSendOutAnim(u8, bool8);
 static void DoSwitchOutAnimation(void);
 static void PlayerDoMoveAnimation(void);
 static void Task_StartSendOutAnim(u8);
+static bool8 IsEachPlayerMonSentOutAlone(void);
 static void EndDrawPartyStatusSummary(void);
 
 static void (*const sPlayerBufferCommands[CONTROLLER_CMDS_COUNT])(void) =
@@ -945,7 +946,7 @@ static void Intro_WaitForShinyAnimAndHealthbox(void)
     bool8 healthboxAnimDone = FALSE;
 
     // Check if healthbox has finished sliding in
-    if (!IsDoubleBattle() || (IsDoubleBattle() && (gBattleTypeFlags & BATTLE_TYPE_MULTI)))
+    if (IsEachPlayerMonSentOutAlone())
     {
         if (gSprites[gHealthboxSpriteIds[gActiveBattler]].callback == SpriteCallbackDummy)
             healthboxAnimDone = TRUE;
@@ -1000,7 +1001,7 @@ static void Intro_TryShinyAnimShowHealthbox(void)
     {
         if (!gBattleSpritesDataPtr->healthBoxesData[gActiveBattler].healthboxSlideInStarted)
         {
-            if (IsDoubleBattle() && !(gBattleTypeFlags & BATTLE_TYPE_MULTI))
+            if (!IsEachPlayerMonSentOutAlone())
             {
                 UpdateHealthboxAttribute(gHealthboxSpriteIds[BATTLE_PARTNER(gActiveBattler)], &gPlayerParty[gBattlerPartyIndexes[BATTLE_PARTNER(gActiveBattler)]], HEALTHBOX_ALL);
                 StartHealthboxSlideIn(BATTLE_PARTNER(gActiveBattler));
@@ -1031,7 +1032,7 @@ static void Intro_TryShinyAnimShowHealthbox(void)
     }
 
     // Wait for battler anims
-    if (!IsDoubleBattle() || (IsDoubleBattle() && (gBattleTypeFlags & BATTLE_TYPE_MULTI)))
+    if (IsEachPlayerMonSentOutAlone())
     {
         if (gSprites[gBattleControllerData[gActiveBattler]].callback == SpriteCallbackDummy
             && gSprites[gBattlerSpriteIds[gActiveBattler]].callback == SpriteCallbackDummy)
@@ -1053,7 +1054,7 @@ static void Intro_TryShinyAnimShowHealthbox(void)
     // Clean up
     if (bgmRestored && battlerAnimsDone)
     {
-        if (IsDoubleBattle() && !(gBattleTypeFlags & BATTLE_TYPE_MULTI))
+        if (!IsEachPlayerMonSentOutAlone())
             DestroySprite(&gSprites[gBattleControllerData[BATTLE_PARTNER(gActiveBattler)]]);
         DestroySprite(&gSprites[gBattleControllerData[gActiveBattler]]);
 
@@ -2292,12 +2293,25 @@ static void PlayerHandleDrawTrainerPic(void)
             trainerPicId = gLinkPlayers[GetMultiplayerId()].gender + TRAINER_BACK_PIC_BRENDAN;
         }
     }
+    else if (IsCoopBattle() && Coop_GetBattlerOwner(gActiveBattler) == COOP_PLAYER_2)
+    {
+        trainerPicId = Coop_GetPlayer2Gender(); // TRAINER_BACK_PIC_BRENDAN or TRAINER_BACK_PIC_MAY
+    }
     else
     {
         trainerPicId = gSaveBlock2Ptr->playerGender;
     }
 
-    if (gBattleTypeFlags & BATTLE_TYPE_MULTI)
+    if (IsCoopBattle())
+    {
+        // Both players' trainers stand side by side, like in multi battles.
+        if ((GetBattlerPosition(gActiveBattler) & BIT_FLANK) != B_FLANK_LEFT)
+            xPos = 90;
+        else
+            xPos = 32;
+        yPos = (8 - gTrainerBackPicCoords[trainerPicId].size) * 4 + 80;
+    }
+    else if (gBattleTypeFlags & BATTLE_TYPE_MULTI)
     {
         if ((GetBattlerPosition(gActiveBattler) & BIT_FLANK) != B_FLANK_LEFT) // Second mon, on the right.
             xPos = 90;
@@ -2955,8 +2969,17 @@ static void PlayerHandleIntroTrainerBallThrow(void)
     StoreSpriteCallbackInData6(&gSprites[gBattlerSpriteIds[gActiveBattler]], SpriteCB_FreePlayerSpriteLoadMonSprite);
     StartSpriteAnim(&gSprites[gBattlerSpriteIds[gActiveBattler]], 1);
 
-    paletteNum = AllocSpritePalette(0xD6F8);
-    LoadCompressedPalette(gTrainerBackPicPaletteTable[gSaveBlock2Ptr->playerGender].data, OBJ_PLTT_ID(paletteNum), PLTT_SIZE_4BPP);
+    if (IsCoopBattle() && Coop_GetBattlerOwner(gActiveBattler) == COOP_PLAYER_2)
+    {
+        // Player 2's trainer needs its own palette while both trainers throw.
+        paletteNum = AllocSpritePalette(0xD6F9);
+        LoadCompressedPalette(gTrainerBackPicPaletteTable[Coop_GetPlayer2Gender()].data, OBJ_PLTT_ID(paletteNum), PLTT_SIZE_4BPP);
+    }
+    else
+    {
+        paletteNum = AllocSpritePalette(0xD6F8);
+        LoadCompressedPalette(gTrainerBackPicPaletteTable[gSaveBlock2Ptr->playerGender].data, OBJ_PLTT_ID(paletteNum), PLTT_SIZE_4BPP);
+    }
     gSprites[gBattlerSpriteIds[gActiveBattler]].oam.paletteNum = paletteNum;
 
     taskId = CreateTask(Task_StartSendOutAnim, 5);
@@ -2997,7 +3020,7 @@ static void Task_StartSendOutAnim(u8 taskId)
         u8 savedActiveBattler = gActiveBattler;
 
         gActiveBattler = gTasks[taskId].tBattlerId;
-        if (!IsDoubleBattle() || (gBattleTypeFlags & BATTLE_TYPE_MULTI))
+        if (IsEachPlayerMonSentOutAlone())
         {
             gBattleBufferA[gActiveBattler][1] = gBattlerPartyIndexes[gActiveBattler];
             StartSendOutAnim(gActiveBattler, FALSE);
@@ -3020,6 +3043,14 @@ static void Task_StartSendOutAnim(u8 taskId)
 
 #undef tBattlerId
 #undef tStartTimer
+
+// TRUE when each player-side Pokémon comes out of its own trainer's throw:
+// singles, multi battles, and co-op battles (Player 1 and Player 2 each throw
+// their own). Otherwise (vanilla doubles) the left battler sends out both.
+static bool8 IsEachPlayerMonSentOutAlone(void)
+{
+    return !IsDoubleBattle() || (gBattleTypeFlags & BATTLE_TYPE_MULTI) || IsCoopBattle();
+}
 
 static void PlayerHandleDrawPartyStatusSummary(void)
 {

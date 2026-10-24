@@ -113,12 +113,25 @@ LittlerootTown_ProfessorBirchsLab_EventScript_GiveStarterEvent::
 	waitfanfare
 	msgbox LittlerootTown_ProfessorBirchsLab_Text_WhyNotGiveNicknameToMon, MSGBOX_YESNO
 	goto_if_eq VAR_RESULT, YES, LittlerootTown_ProfessorBirchsLab_EventScript_NicknameStarter
-	goto_if_eq VAR_RESULT, NO, LittlerootTown_ProfessorBirchsLab_EventScript_GoSeeRival
+	goto_if_eq VAR_RESULT, NO, LittlerootTown_ProfessorBirchsLab_EventScript_AskNicknamePlayer2Starter
 	end
 
 LittlerootTown_ProfessorBirchsLab_EventScript_NicknameStarter::
 	setvar VAR_0x8004, 0
 	call Common_EventScript_NameReceivedPartyMon
+	goto LittlerootTown_ProfessorBirchsLab_EventScript_AskNicknamePlayer2Starter
+	end
+
+@ Co-op: then Player 2 can nickname their starter, with Player 2's buttons
+LittlerootTown_ProfessorBirchsLab_EventScript_AskNicknamePlayer2Starter::
+	special Coop_BufferPlayer2Starter
+	goto_if_eq VAR_RESULT, FALSE, LittlerootTown_ProfessorBirchsLab_EventScript_GoSeeRival
+	special Coop_GiveInputToPlayer2
+	msgbox LittlerootTown_ProfessorBirchsLab_Text_CoopNicknamePlayer2Mon, MSGBOX_YESNO
+	goto_if_eq VAR_RESULT, NO, LittlerootTown_ProfessorBirchsLab_EventScript_DoneNicknamingPlayer2Starter
+	call Common_EventScript_NameReceivedPartyMon
+LittlerootTown_ProfessorBirchsLab_EventScript_DoneNicknamingPlayer2Starter::
+	special Coop_GiveInputToPlayer1
 	goto LittlerootTown_ProfessorBirchsLab_EventScript_GoSeeRival
 	end
 
@@ -690,6 +703,10 @@ LittlerootTown_ProfessorBirchsLab_Text_LikeYouToHavePokemon:
 LittlerootTown_ProfessorBirchsLab_Text_WhyNotGiveNicknameToMon:
 	.string "PROF. BIRCH: While you're at it, why not\n"
 	.string "give a nickname to that {STR_VAR_1}?$"
+
+LittlerootTown_ProfessorBirchsLab_Text_CoopNicknamePlayer2Mon:
+	.string "PROF. BIRCH: And {STR_VAR_2}, how about\n"
+	.string "a nickname for your {STR_VAR_1}?$"
 
 LittlerootTown_ProfessorBirchsLab_Text_MightBeGoodIdeaToGoSeeRival:
 	.string "PROF. BIRCH: If you work at POKéMON\n"

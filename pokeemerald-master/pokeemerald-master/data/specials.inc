@@ -542,3 +542,6 @@ gSpecials::
 	def_special TrySetBattleTowerLinkType
 	def_special Coop_TryMoveMonToOtherTeam
 	def_special Coop_TrySwapTeamMons
+	def_special Coop_BufferPlayer2Starter
+	def_special Coop_GiveInputToPlayer2
+	def_special Coop_GiveInputToPlayer1

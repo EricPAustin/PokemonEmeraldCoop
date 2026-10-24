@@ -22,12 +22,13 @@ CoopText_TeamsIntro::
 	.string "the other player's team.$"
 
 CoopText_MonJoinedTeam::
-	.string "{STR_VAR_1} joined {STR_VAR_2}'s team!$"
+	.string "{STR_VAR_1} joined\n"
+	.string "{STR_VAR_2}'s team!$"
 
 CoopText_TeamFullChooseSwap::
 	.string "{STR_VAR_2}'s team is full.\p"
-	.string "Choose one of {STR_VAR_2}'s POKéMON to\n"
-	.string "trade places with {STR_VAR_1}.$"
+	.string "Pick one of {STR_VAR_2}'s POKéMON\n"
+	.string "to trade places with {STR_VAR_1}.$"
 
 CoopText_MonsSwitchedTeams::
 	.string "{STR_VAR_1} and {STR_VAR_3}\n"
