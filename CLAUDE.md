@@ -13,6 +13,7 @@ For how the co-op works in detail (controls, saving, error messages, testing don
 - **Base:** vanilla pret/pokeemerald (Gen 3 mechanics), not pokeemerald-expansion.
 - **Co-op model:** linked lockstep. Two mGBA windows (File → New multiplayer window) connected over the emulated link cable. Every frame both games swap both players' buttons and only advance once both have arrived, so both simulate identical frames (same RNG, NPCs, battles, saves). Each player has their own character and camera; P2 is tethered to P1 (7 tiles across, 6 up/down).
 - **Teams:** each player has up to 3 Pokémon, split from the one party. Teams are swapped at any PC via **CO-OP TEAMS**.
+- **Player 2's identity:** `SaveBlock2.coopP2Name` (the old unused `filler_90`), `coopP2Gender` and `coopP2Named` (spare option bits), so no save space was used and old saves still load. Older saves have `coopP2Named == FALSE` and fall back to the rival sprite named BRENDAN/MAY. Always read them through `Coop_GetPlayer2Gender()` / `Coop_CopyPlayerName()` in `src/coop.c`.
 - **Saves:** both games write the same save. mGBA's second window uses `pokeemerald.sa2`, which must match `pokeemerald.sav`.
 - **Config:** `include/coop_link.h`: `COOP_LINKED` (build with/without linked co-op), `COOP_DEBUG_DESYNC` (freeze on desync and keep per-frame state hashes).
 
@@ -24,8 +25,8 @@ For how the co-op works in detail (controls, saving, error messages, testing don
 
 ## Roadmap
 - **Phase 0 – Setup:** private GitHub repo ✅, clean build running in mGBA, this file in place ✅.
-- **Phase 1 – Two players exist:** ✅ P2 character, P2 starter, split teams, shared save, NEW GAME/CONTINUE in co-op, P2 can use doors/warps.
-- **Phase 2 – Co-op battles:** ✅ multi battles, each player picks their own Pokémon's moves ("P1:/P2: What will..."). To do: P2's trainer back sprite, wild double battles, edge cases below.
+- **Phase 1 – Two players exist:** ✅ P2 character, P2 starter, split teams, shared save, NEW GAME/CONTINUE in co-op, P2 can use doors/warps. P2 picks their own gender and name in Birch's intro and can nickname their starter in Birch's lab (needs playtest).
+- **Phase 2 – Co-op battles:** ✅ multi battles, each player picks their own Pokémon's moves ("P1:/P2: What will..."). P2's trainer back sprite slides in and throws P2's Pokémon (needs playtest). To do: wild double battles, edge cases below.
 - **Phase 3 – Doubled trainers:** ✅ generated "mirrored partner" for every trainer (same class, different species, same levels, ≤3 Pokémon per side). To do: hand-tune notable fights (gyms, Elite Four, Champion).
 - **Phase 4 – Content:** casino (can reuse Mauville Game Corner code), new/changed maps, story additions.
 
@@ -34,6 +35,9 @@ For how the co-op works in detail (controls, saving, error messages, testing don
 - P2 can only use doors on P1's current map.
 - Cable Club, Union Room, record mixing, link battles/contests are disabled (link cable is busy).
 - P1's starter fights the first Zigzagoon alone (scripted single battle).
+- If both players pick the same gender, their overworld sprites look identical (P2 uses the rival sprite of their gender).
+- In yes/no boxes during dialogue, the other player can still press A/B, so P1 can answer P2's "nickname?" question by mashing A.
+- Battle prompts still say "P1:"/"P2:" rather than names (the prompt box is narrow).
 
 ## Known risk areas
 - **Save space is almost full** (build output, 2026-10-23): SaveBlock1 15752/15872 B (99.2%, ~120 B free), SaveBlock2 3884/3968 B (97.9%), PokemonStorage 94.5%. Any new saved data (casino, new flags/vars beyond spare ones, P2 stats) must reuse existing space or free some first. The build fails if a block overflows.
@@ -79,9 +83,9 @@ Then each time:
 - Co-op is playable from NEW GAME through at least Route 102/103 per the testing notes.
 - 2026-10-23: reviewed repo against the original plan, rewrote this file to match what's built, removed 20 leftover `.rej` files (all hunks verified as already applied or superseded), added `.gitignore`.
 - 2026-10-23: clean build on Declan's PC (WSL Ubuntu, agbcc), `pokeemerald.gba` produced.
+- 2026-10-23: Player 2 update (builds, not playtested yet): P2 gender + name in Birch's intro, P2 nickname for their starter in the lab, P2's name on the starter screen and CO-OP TEAMS PC, P2 overworld sprite follows P2's gender, P2 trainer back sprite in co-op battles (each player throws their own Pokémon, using the multi-battle send-out path).
 - Next:
-  1. Playtest the build in two linked mGBA windows.
+  1. Playtest the Player 2 update from NEW GAME through the first trainer battle.
   2. Test linking across two PCs on the home network.
-  3. P2's trainer sprite in battle.
-  4. Wild double battles.
+  3. Wild double battles.
   5. Full playthrough test: gyms, Elite Four, Champion.

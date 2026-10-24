@@ -36,6 +36,14 @@ void Coop_NormalizeParty(void);
 bool8 Coop_BothTeamsInParty(void);
 void Coop_SwapOwners(struct Pokemon *mon1, struct Pokemon *mon2);
 
+// Player 2's name and gender (picked in Birch's introduction)
+u8 Coop_GetPlayer2Gender(void);
+void Coop_CopyPlayerName(u8 *dest, u8 owner);
+void Coop_SetPlayer2Named(u8 gender);
+void Coop_BufferPlayer2Starter(void);
+void Coop_GiveInputToPlayer2(void);
+void Coop_GiveInputToPlayer1(void);
+
 // Battle
 void Coop_ResetBattle(void);
 bool8 Coop_IsMirrorBattle(void);

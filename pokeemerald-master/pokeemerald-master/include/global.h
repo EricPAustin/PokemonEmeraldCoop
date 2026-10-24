@@ -522,10 +522,12 @@ struct SaveBlock2
              u16 optionsBattleStyle:1; // OPTIONS_BATTLE_STYLE_[SHIFT/SET]
              u16 optionsBattleSceneOff:1; // whether battle animations are disabled
              u16 regionMapZoom:1; // whether the map is zoomed in
-             //u16 padding1:4;
+             u16 coopP2Gender:1; // Co-op: Player 2's gender (MALE, FEMALE)
+             u16 coopP2Named:1;  // Co-op: Player 2 picked a name and gender (FALSE in saves from before that existed)
+             //u16 padding1:2;
              //u16 padding2;
     /*0x18*/ struct Pokedex pokedex;
-    /*0x90*/ u8 filler_90[0x8];
+    /*0x90*/ u8 coopP2Name[PLAYER_NAME_LENGTH + 1]; // Co-op: Player 2's name (was unused filler)
     /*0x98*/ struct Time localTimeOffset;
     /*0xA0*/ struct Time lastBerryTreeUpdate;
     /*0xA8*/ u32 gcnLinkFlags; // Read by Pokémon Colosseum/XD
