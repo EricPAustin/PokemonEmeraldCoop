@@ -96,6 +96,9 @@ including for the other player's team.
 **Saving:** either player can save from the START menu. Both games write the same save, so
 `pokeemerald.sav` and `pokeemerald.sa2` stay identical and next session links right away.
 If they ever differ, you get "The two save files don't match!": copy `.sav` over `.sa2` again.
+Fixed: a game started with NEW GAME used to write slightly different save files on the two
+GBAs, so the next CONTINUE said they don't match. If you still have a save from before the fix,
+copy `.sav` over `.sa2` once; after that they stay identical.
 
 ## Messages you might see
 - **The co-op link was lost.** One window was closed or the link broke. Reset both games and link again
@@ -135,6 +138,10 @@ Two linked mGBA cores, scripted inputs, comparing both games' state every 32 fra
   Player 2 appears next to Player 1 once the cutscenes let go.
 
 ## Surfing together: testing
+- Test save (not in git, saves are ignored): `test-saves/surf-test/` (`pokeemerald.sav` and `pokeemerald.sa2`, identical). P1 (boy) and
+  P2 (girl) on Route 103 next to the water, 5 badges, Marshtomp (P1) and Marill (P2) know Surf, plus
+  Zigzagoon (P1) and Treecko (P2), all level 30. The bag has Max Repels. It's a test setup, not a real
+  playthrough: story events haven't happened.
 - Route 103, both linked: P2 used Surf from the shore, P1 was on land 4 tiles away and jumped onto
   the water next to P2; both surfed around, P2 landed, P1 landed, then P1 used Surf and P2 appeared
   on the water next to P1. P2 using Surf while P1 was already surfing didn't move P1. Opening the

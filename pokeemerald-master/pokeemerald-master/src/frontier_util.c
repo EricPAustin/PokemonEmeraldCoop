@@ -1,4 +1,5 @@
 #include "global.h"
+#include "coop_link.h"
 #include "frontier_util.h"
 #include "event_data.h"
 #include "battle_setup.h"
@@ -2385,7 +2386,9 @@ void ClearRankingHallRecords(void)
     s32 i, j, k;
 
     // UB: Passing 0 as a pointer instead of a pointer holding a value of 0.
-#ifdef UBFIX
+    // Linked co-op: that reads the BIOS, which differs between the two GBAs, so a
+    // co-op NEW GAME would write different save files. Always use the fix.
+#if defined(UBFIX) || COOP_LINKED
     u8 emptyId[TRAINER_ID_LENGTH] = {0};
     #define ZERO emptyId
 #else

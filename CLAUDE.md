@@ -87,6 +87,7 @@ Then each time:
 - 2026-10-23: first playtest of the Player 2 update by Declan + Eric. Fixes from it: P1 always picks the starter first (even if P2 opened the bag) and the starter screen names whose turn it is; battle prompts use player names instead of P1/P2; Pokémon Center nurse no longer prints a garbage "player is waiting in the Union Room" message (co-op skipped clearing that name).
 - 2026-10-23: re-tested those fixes: all work.
 - 2026-10-23: Surfing together (branch `feature/surf-together`, built on the Player 2 update): either player can start surfing (P2 faces water + A, same yes/no prompt, P2's own Surf Pokémon first); the other player appears on the water next to them (if P1 is on land when P2 starts, P1 and P1's camera jump onto the water). Each player then surfs and lands on their own. P2's surfing state is stored as P2's sprite, so it survives battles, menus and saves. Rival normal sprites now reserve 32x32 tile space so P2's surfing sprite isn't cut off. Tested in the two-GBA harness (both P2 genders): no desyncs. Needs a playtest before merging to master.
+- 2026-10-23: Fix (same branch): a linked NEW GAME wrote different save files on the two GBAs (vanilla `ClearRankingHallRecords` copied trainer IDs from address 0, i.e. the BIOS), so the next CONTINUE said the saves don't match. Saves from older co-op NEW GAMEs: copy `.sav` over `.sa2` once. Surfing test save in `test-saves/surf-test/` (Route 103 by the water, 5 badges, both teams know Surf).
 - Next:
   1. Test linking across two PCs on the home network.
   2. Wild double battles.
