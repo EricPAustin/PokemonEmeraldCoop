@@ -47,6 +47,7 @@ void Coop_GiveInputToPlayer1(void);
 // Battle
 void Coop_ResetBattle(void);
 bool8 Coop_IsMirrorBattle(void);
+bool8 Coop_CanBothTeamsFight(void);
 void Coop_InitBattle(void);
 bool8 IsCoopBattle(void);
 u8 Coop_GetBattlerOwner(u8 battler);

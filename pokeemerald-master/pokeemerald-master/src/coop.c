@@ -32,7 +32,6 @@
                                     | BATTLE_TYPE_TOWER_LINK_MULTI  \
                                     | BATTLE_TYPE_SAFARI            \
                                     | BATTLE_TYPE_WALLY_TUTORIAL    \
-                                    | BATTLE_TYPE_FIRST_BATTLE      \
                                     | BATTLE_TYPE_TRAINER_HILL      \
                                     | BATTLE_TYPE_EREADER_TRAINER)
 
@@ -281,6 +280,14 @@ static bool8 CanTeamFight(u8 owner)
             return TRUE;
     }
     return FALSE;
+}
+
+// Whether the next battle will be a co-op double battle. Also used as a
+// special by scripts that set up a battle differently for co-op (Steven's
+// tag battle in the Mossdeep Space Center).
+bool8 Coop_CanBothTeamsFight(void)
+{
+    return COOP_ENABLED && CanTeamFight(COOP_PLAYER_1) && CanTeamFight(COOP_PLAYER_2);
 }
 
 void Coop_ResetBattle(void)
@@ -546,6 +553,16 @@ static void InitCoopBattle(void)
     if ((gBattleTypeFlags & BATTLE_TYPE_TRAINER)
      && !(gBattleTypeFlags & (BATTLE_TYPE_TWO_OPPONENTS | BATTLE_TYPE_SECRET_BASE)))
         AddMirrorOpponent();
+
+    // Birch's Zigzagoon brings a friend, so each player faces one.
+    if (gBattleTypeFlags & BATTLE_TYPE_FIRST_BATTLE)
+    {
+        u16 heldItem = ITEM_NONE;
+
+        CreateMon(&gEnemyParty[1], SPECIES_ZIGZAGOON, 2, USE_RANDOM_IVS, 0, 0, OT_ID_PLAYER_ID, 0);
+        SetMonData(&gEnemyParty[1], MON_DATA_HELD_ITEM, &heldItem);
+        return;
+    }
 
     // Wild Pokémon come in pairs (not roamers, legendaries or scripted battles).
     if (!(gBattleTypeFlags & BATTLE_TYPE_TRAINER))
