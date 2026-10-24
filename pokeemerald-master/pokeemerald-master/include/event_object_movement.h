@@ -149,6 +149,7 @@ void InitObjectEventPalettes(u8 reflectionType);
 void UpdateObjectEventCurrentMovement(struct ObjectEvent *objectEvent, struct Sprite *sprite, bool8 (*callback)(struct ObjectEvent *, struct Sprite *));
 bool8 ObjectEventFaceOppositeDirection(struct ObjectEvent *objectEvent, u8 direction);
 u8 GetOppositeDirection(u8 direction);
+u8 GetDirectionToFace(s16 x, s16 y, s16 targetX, s16 targetY);
 u8 GetWalkInPlaceFasterMovementAction(u8);
 u8 GetWalkInPlaceFastMovementAction(u8);
 u8 GetWalkInPlaceNormalMovementAction(u8);

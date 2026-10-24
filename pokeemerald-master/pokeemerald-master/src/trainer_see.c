@@ -10,6 +10,7 @@
 #include "sprite.h"
 #include "task.h"
 #include "trainer_see.h"
+#include "coop_link.h"
 #include "trainer_hill.h"
 #include "util.h"
 #include "battle_pyramid.h"
@@ -57,6 +58,11 @@ COMMON_DATA bool8 gTrainerApproachedPlayer = 0;
 
 // EWRAM
 EWRAM_DATA u8 gApproachingTrainerId = 0;
+
+// Linked co-op: which approaching trainers spotted Player 2 instead of Player 1.
+// They walk up to Player 2, and Player 2 turns to face them.
+static EWRAM_DATA bool8 sApproachingTrainerSpottedP2[2] = {0};
+static EWRAM_DATA bool8 sSightSpottedP2 = FALSE; // Set by GetTrainerApproachDistance
 
 // const rom data
 static const u8 sEmotion_ExclamationMarkGfx[] = INCGFX_U8("graphics/field_effects/pics/emotion_exclamation.png", ".4bpp");
@@ -194,6 +200,8 @@ bool8 CheckForTrainersWantingBattle(void)
 
     gNoOfApproachingTrainers = 0;
     gApproachingTrainerId = 0;
+    sApproachingTrainerSpottedP2[0] = FALSE;
+    sApproachingTrainerSpottedP2[1] = FALSE;
 
     for (i = 0; i < OBJECT_EVENTS_COUNT; i++)
     {
@@ -289,6 +297,7 @@ static u8 CheckTrainer(u8 objectEventId)
         gApproachingTrainers[gNoOfApproachingTrainers].objectEventId = objectEventId;
         gApproachingTrainers[gNoOfApproachingTrainers].trainerScriptPtr = scriptPtr;
         gApproachingTrainers[gNoOfApproachingTrainers].radius = approachDistance;
+        sApproachingTrainerSpottedP2[gNoOfApproachingTrainers] = sSightSpottedP2;
         InitTrainerApproachTask(&gObjectEvents[objectEventId], approachDistance - 1);
         gNoOfApproachingTrainers++;
 
@@ -298,13 +307,39 @@ static u8 CheckTrainer(u8 objectEventId)
     return 0;
 }
 
+static u8 GetTrainerApproachDistanceTo(struct ObjectEvent *trainerObj, s16 x, s16 y);
+
 static u8 GetTrainerApproachDistance(struct ObjectEvent *trainerObj)
 {
     s16 x, y;
+    u8 approachDistance;
+    struct ObjectEvent *p2;
+
+    sSightSpottedP2 = FALSE;
+    PlayerGetDestCoords(&x, &y);
+    approachDistance = GetTrainerApproachDistanceTo(trainerObj, x, y);
+    if (approachDistance != 0)
+        return approachDistance;
+
+    // Linked co-op: trainers also spot Player 2 while Player 2 walks around.
+    if (COOP_LINKED && CoopP2_IsWalking())
+    {
+        p2 = CoopP2_GetObject();
+        approachDistance = GetTrainerApproachDistanceTo(trainerObj, p2->currentCoords.x, p2->currentCoords.y);
+        if (approachDistance != 0)
+        {
+            sSightSpottedP2 = TRUE;
+            return approachDistance;
+        }
+    }
+    return 0;
+}
+
+static u8 GetTrainerApproachDistanceTo(struct ObjectEvent *trainerObj, s16 x, s16 y)
+{
     u8 i;
     u8 approachDistance;
 
-    PlayerGetDestCoords(&x, &y);
     if (trainerObj->trainerType == TRAINER_TYPE_NORMAL)  // can only see in one direction
     {
         approachDistance = sDirectionalApproachDistanceFuncs[trainerObj->facingDirection - 1](trainerObj, trainerObj->trainerRange_berryTreeId, x, y);
@@ -408,6 +443,7 @@ static u8 CheckPathBetweenTrainerAndPlayer(struct ObjectEvent *trainerObj, u8 ap
 #define tTrainerRange       data[3]
 #define tOutOfAshSpriteId   data[4]
 #define tTrainerObjectEventId data[7]
+#define tSpottedP2          data[8]
 
 static void InitTrainerApproachTask(struct ObjectEvent *trainerObj, u8 range)
 {
@@ -417,6 +453,28 @@ static void InitTrainerApproachTask(struct ObjectEvent *trainerObj, u8 range)
     task = &gTasks[gApproachingTrainers[gNoOfApproachingTrainers].taskId];
     task->tTrainerRange = range;
     task->tTrainerObjectEventId = gApproachingTrainers[gNoOfApproachingTrainers].objectEventId;
+    task->tSpottedP2 = sSightSpottedP2;
+}
+
+// Linked co-op: the object the trainer walks up to (Player 2 if they spotted Player 2).
+static struct ObjectEvent *GetSpottedPlayerObject(struct Task *task)
+{
+    struct ObjectEvent *p2;
+
+    if (COOP_LINKED && task->tSpottedP2 && (p2 = CoopP2_GetObject()) != NULL)
+        return p2;
+    return &gObjectEvents[gPlayerAvatar.objectEventId];
+}
+
+// MOVEMENT_ACTION_FACE_PLAYER only faces Player 1.
+static u8 GetFaceSpottedPlayerMovementAction(struct Task *task, struct ObjectEvent *trainerObj)
+{
+    struct ObjectEvent *target = GetSpottedPlayerObject(task);
+
+    if (target == &gObjectEvents[gPlayerAvatar.objectEventId])
+        return MOVEMENT_ACTION_FACE_PLAYER;
+    return GetFaceDirectionMovementAction(GetDirectionToFace(trainerObj->currentCoords.x, trainerObj->currentCoords.y,
+                                                             target->currentCoords.x, target->currentCoords.y));
 }
 
 static void StartTrainerApproach(TaskFunc followupFunc)
@@ -498,7 +556,7 @@ static bool8 TrainerMoveToPlayer(u8 taskId, struct Task *task, struct ObjectEven
         }
         else
         {
-            ObjectEventSetHeldMovement(trainerObj, MOVEMENT_ACTION_FACE_PLAYER);
+            ObjectEventSetHeldMovement(trainerObj, GetFaceSpottedPlayerMovementAction(task, trainerObj));
             task->tFuncId++; // TRSEE_PLAYER_FACE
         }
     }
@@ -518,12 +576,13 @@ static bool8 PlayerFaceApproachingTrainer(u8 taskId, struct Task *task, struct O
     TryOverrideTemplateCoordsForObjectEvent(trainerObj, GetTrainerFacingDirectionMovementType(trainerObj->facingDirection));
     OverrideTemplateCoordsForObjectEvent(trainerObj);
 
-    playerObj = &gObjectEvents[gPlayerAvatar.objectEventId];
+    playerObj = GetSpottedPlayerObject(task);
     if (ObjectEventIsMovementOverridden(playerObj) && !ObjectEventClearHeldMovementIfFinished(playerObj))
         return FALSE;
 
-    CancelPlayerForcedMovement();
-    ObjectEventSetHeldMovement(&gObjectEvents[gPlayerAvatar.objectEventId], GetFaceDirectionMovementAction(GetOppositeDirection(trainerObj->facingDirection)));
+    if (playerObj == &gObjectEvents[gPlayerAvatar.objectEventId])
+        CancelPlayerForcedMovement();
+    ObjectEventSetHeldMovement(playerObj, GetFaceDirectionMovementAction(GetOppositeDirection(trainerObj->facingDirection)));
     task->tFuncId++; // TRSEE_PLAYER_FACE_WAIT
     return FALSE;
 }
@@ -531,7 +590,7 @@ static bool8 PlayerFaceApproachingTrainer(u8 taskId, struct Task *task, struct O
 // TRSEE_PLAYER_FACE_WAIT
 static bool8 WaitPlayerFaceApproachingTrainer(u8 taskId, struct Task *task, struct ObjectEvent *trainerObj)
 {
-    struct ObjectEvent *playerObj = &gObjectEvents[gPlayerAvatar.objectEventId];
+    struct ObjectEvent *playerObj = GetSpottedPlayerObject(task);
 
     if (!ObjectEventIsMovementOverridden(playerObj)
      || ObjectEventClearHeldMovementIfFinished(playerObj))
@@ -566,7 +625,7 @@ static bool8 RevealBuriedTrainer(u8 taskId, struct Task *task, struct ObjectEven
     if (!ObjectEventIsMovementOverridden(trainerObj)
      || ObjectEventClearHeldMovementIfFinished(trainerObj))
     {
-        ObjectEventSetHeldMovement(trainerObj, MOVEMENT_ACTION_FACE_PLAYER);
+        ObjectEventSetHeldMovement(trainerObj, GetFaceSpottedPlayerMovementAction(task, trainerObj));
         task->tFuncId++;
     }
     return FALSE;
@@ -619,6 +678,7 @@ static bool8 WaitRevealBuriedTrainer(u8 taskId, struct Task *task, struct Object
 #undef tTrainerRange
 #undef tOutOfAshSpriteId
 #undef tTrainerObjectEventId
+#undef tSpottedP2
 
 #define tObjEvent data[1]
 
@@ -795,7 +855,8 @@ void PlayerFaceTrainerAfterBattle(void)
 {
     struct ObjectEvent *objEvent;
 
-    if (gTrainerApproachedPlayer == TRUE)
+    // Linked co-op: if the trainer spotted Player 2, Player 2 already faces them and Player 1 stays put.
+    if (gTrainerApproachedPlayer == TRUE && !sApproachingTrainerSpottedP2[gWhichTrainerToFaceAfterBattle])
     {
         objEvent = &gObjectEvents[gApproachingTrainers[gWhichTrainerToFaceAfterBattle].objectEventId];
         gPostBattleMovementScript[0] = GetFaceDirectionMovementAction(GetOppositeDirection(objEvent->facingDirection));
