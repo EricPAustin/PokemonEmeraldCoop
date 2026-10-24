@@ -39,8 +39,8 @@ EWRAM_DATA bool8 gCoopBattle = FALSE;
 EWRAM_DATA bool8 gCoopChoosingPlayer2Starter = FALSE; // The starter screen is open for Player 2
 EWRAM_DATA bool8 gCoopMirrorBattle = FALSE; // The second opponent was added by co-op (see AddMirrorOpponent)
 
-static const u8 sText_CoopP1WhatWillPkmnDo[] = _("P1: What will\n{B_ACTIVE_NAME_WITH_PREFIX} do?");
-static const u8 sText_CoopP2WhatWillPkmnDo[] = _("P2: What will\n{B_ACTIVE_NAME_WITH_PREFIX} do?");
+static const u8 sText_CoopWhatWillPkmnDo[] = _(": What will\n{B_ACTIVE_NAME_WITH_PREFIX} do?"); // After the player's name
+static EWRAM_DATA u8 sCoopWhatWillPkmnDoText[PLAYER_NAME_LENGTH + 1 + 24] = {0};
 const u8 gText_CoopNotYourMon[] = _("{STR_VAR_1} belongs to\nthe other player!");
 
 // ---------------------------------------------------------------------------
@@ -673,9 +673,11 @@ const u8 *Coop_GetWhatWillPkmnDoText(u8 battler)
 {
     if (!IsCoopBattle() || GetBattlerSide(battler) != B_SIDE_PLAYER)
         return gText_WhatWillPkmnDo;
-    if (Coop_GetBattlerOwner(battler) == COOP_PLAYER_2)
-        return sText_CoopP2WhatWillPkmnDo;
-    return sText_CoopP1WhatWillPkmnDo;
+
+    // "NAME: What will\nPOKéMON do?" (the longest names still fit the prompt box)
+    Coop_CopyPlayerName(sCoopWhatWillPkmnDoText, Coop_GetBattlerOwner(battler));
+    StringAppend(sCoopWhatWillPkmnDoText, sText_CoopWhatWillPkmnDo);
+    return sCoopWhatWillPkmnDoText;
 }
 
 // ---------------------------------------------------------------------------

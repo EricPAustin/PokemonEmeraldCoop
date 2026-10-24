@@ -915,6 +915,7 @@ static void CB2_GiveCoopPlayer2Starter(void);
 void ChooseStarter(void)
 {
     gCoopChoosingPlayer2Starter = FALSE;
+    gCoopInputOwner = COOP_PLAYER_1; // Player 1 always picks first, even if Player 2 opened the bag
     SetMainCallback2(CB2_ChooseStarter);
     gMain.savedCallback = CB2_GiveStarter;
 }

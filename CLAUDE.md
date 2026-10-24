@@ -37,7 +37,7 @@ For how the co-op works in detail (controls, saving, error messages, testing don
 - P1's starter fights the first Zigzagoon alone (scripted single battle).
 - If both players pick the same gender, their overworld sprites look identical (P2 uses the rival sprite of their gender).
 - In yes/no boxes during dialogue, the other player can still press A/B, so P1 can answer P2's "nickname?" question by mashing A.
-- Battle prompts still say "P1:"/"P2:" rather than names (the prompt box is narrow).
+- Story cutscenes and dialogue only involve P1 (e.g. Dad on the TV, NPCs address only {PLAYER}). Fixing means editing each event by hand: deferred, low gameplay impact.
 
 ## Known risk areas
 - **Save space is almost full** (build output, 2026-10-23): SaveBlock1 15752/15872 B (99.2%, ~120 B free), SaveBlock2 3884/3968 B (97.9%), PokemonStorage 94.5%. Any new saved data (casino, new flags/vars beyond spare ones, P2 stats) must reuse existing space or free some first. The build fails if a block overflows.
@@ -84,8 +84,9 @@ Then each time:
 - 2026-10-23: reviewed repo against the original plan, rewrote this file to match what's built, removed 20 leftover `.rej` files (all hunks verified as already applied or superseded), added `.gitignore`.
 - 2026-10-23: clean build on Declan's PC (WSL Ubuntu, agbcc), `pokeemerald.gba` produced.
 - 2026-10-23: Player 2 update (builds, not playtested yet): P2 gender + name in Birch's intro, P2 nickname for their starter in the lab, P2's name on the starter screen and CO-OP TEAMS PC, P2 overworld sprite follows P2's gender, P2 trainer back sprite in co-op battles (each player throws their own Pokémon, using the multi-battle send-out path).
+- 2026-10-23: first playtest of the Player 2 update by Declan + Eric. Fixes from it: P1 always picks the starter first (even if P2 opened the bag) and the starter screen names whose turn it is; battle prompts use player names instead of P1/P2; Pokémon Center nurse no longer prints a garbage "player is waiting in the Union Room" message (co-op skipped clearing that name).
 - Next:
-  1. Playtest the Player 2 update from NEW GAME through the first trainer battle.
+  1. Re-test the fixes above (starter bag opened by P2, battle prompts, healing at a Pokémon Center).
   2. Test linking across two PCs on the home network.
   3. Wild double battles.
   5. Full playthrough test: gyms, Elite Four, Champion.
