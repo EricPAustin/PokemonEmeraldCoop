@@ -54,6 +54,18 @@ Player 2's starter.
 - P2 surfs at running speed, like P1, and hops off onto land by walking into the shore.
 - Battles, menus and saving don't knock P2 off the water.
 
+### Wild Pokémon: both players, two at a time
+- Either player's steps in grass, caves or water can start a wild battle. While Player 2 is walking
+  around (not riding along), each player's chance per step is halved, so together you find about as
+  many as one player normally would.
+- Wild battles are double battles: two wild Pokémon, each rolled separately from the same list
+  (grass, water, Rock Smash or the same fishing rod), so they're usually different but can be the
+  same species. Each can hold an item. Roamers, legendaries and scripted encounters stay one-on-one.
+- A Poké Ball goes to the wild Pokémon across from the thrower (or the other one if that spot is
+  empty). Catching one ends the battle, like in the original game.
+- The battle background matches where the Pokémon was found (water if Player 2 found it while surfing).
+- If only one player has a Pokémon that can fight, wild battles are the original singles.
+
 ### Party screen
 The party screen outside battle now looks like the one in co-op battles: Player 1's lead (blue)
 top left, Player 2's lead (gold) below it, then the rest of Player 1's team and the rest of
@@ -137,6 +149,15 @@ Two linked mGBA cores, scripted inputs, comparing both games' state every 32 fra
   the truck, arriving in Littleroot and walking into the house stay in sync (about 15,000 frames).
   Player 2 appears next to Player 1 once the cutscenes let go.
 
+## Wild doubles: testing
+- Route 103: Player 2 found Pokémon in the grass and while surfing (water background, two Tentacool /
+  two Wingull) while Player 1 stood still; both battles played out and Player 2 stayed on the water
+  afterwards. A Poké Ball throw missed ("Almost had it!"), a Master Ball caught one and ended the
+  battle. A 30-cycle random walk with both players in the grass stayed in sync.
+- Fixed on the way: a co-op battle could freeze right after "Go! ... and ...!" (Player 2's send-out
+  waited forever for a flag Player 1's send-out had just reset). This could also happen in trainer
+  battles.
+
 ## Surfing together: testing
 - Test save (not in git, saves are ignored): `test-saves/surf-test/` (`pokeemerald.sav` and `pokeemerald.sa2`, identical). P1 (boy) and
   P2 (girl) on Route 103 next to the water, 5 badges, Marshtomp (P1) and Marill (P2) know Surf, plus
@@ -177,7 +198,8 @@ Two linked mGBA cores, scripted inputs, comparing both games' state every 32 fra
 - Talking to Player 2 does nothing (it used to run a random script).
 
 ## How to undo it
-Surfing together is not a patch file: it is the git branch `feature/surf-together` (undo with `git revert`).
+Surfing together and wild doubles are not patch files: they are the git branches `feature/surf-together`
+and `feature/wild-doubles` (undo with `git revert`).
 The patches below are older history, from before the source was in git:
 ```
 patch -R -p1 < "../../coop-always-linked.patch" # goes back to SELECT to link (A plays solo)

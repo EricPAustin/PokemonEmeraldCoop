@@ -37,6 +37,8 @@
 #include "constants/trainer_hill.h"
 
 static EWRAM_DATA u8 sWildEncounterImmunitySteps = 0;
+static EWRAM_DATA u8 sP2WildEncounterImmunitySteps = 0; // Linked co-op: the same for Player 2's steps
+static EWRAM_DATA u16 sP2PrevMetatileBehavior = 0;
 static EWRAM_DATA u16 sPrevMetatileBehavior = 0;
 
 COMMON_DATA u8 gSelectedObjectEvent = 0;
@@ -749,6 +751,37 @@ void RestartWildEncounterImmunitySteps(void)
 {
     // Starts at 0 and counts up to 4 steps.
     sWildEncounterImmunitySteps = 0;
+    sP2WildEncounterImmunitySteps = 0;
+}
+
+// Linked co-op: Player 2 just stepped onto (x, y). Same rules as Player 1's
+// steps (4 safe steps after a battle or map change, chance to skip on a new
+// kind of tile), with Player 2's own counters.
+bool8 Coop_TryWildEncounterAt(s16 x, s16 y)
+{
+    u16 metatileBehavior;
+
+    if (GetMapBorderIdAt(x, y) != CONNECTION_NONE)
+        return FALSE; // Across a map border: that map's Pokémon aren't loaded
+
+    metatileBehavior = MapGridGetMetatileBehaviorAt(x, y);
+    if (sP2WildEncounterImmunitySteps < 4)
+    {
+        sP2WildEncounterImmunitySteps++;
+        sP2PrevMetatileBehavior = metatileBehavior;
+        return FALSE;
+    }
+
+    if (StandardWildEncounter(metatileBehavior, sP2PrevMetatileBehavior) == TRUE)
+    {
+        sP2WildEncounterImmunitySteps = 0;
+        sWildEncounterImmunitySteps = 0;
+        sP2PrevMetatileBehavior = metatileBehavior;
+        return TRUE;
+    }
+
+    sP2PrevMetatileBehavior = metatileBehavior;
+    return FALSE;
 }
 
 static bool8 CheckStandardWildEncounter(u16 metatileBehavior)

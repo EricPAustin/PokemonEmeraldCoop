@@ -1,4 +1,5 @@
 #include "global.h"
+#include "coop_link.h"
 #include "battle_setup.h"
 #include "battle_pike.h"
 #include "battle_pyramid.h"
@@ -61,6 +62,14 @@ static bool8 IsAbilityAllowingEncounter(u8 level);
 
 EWRAM_DATA static u8 sWildEncountersDisabled = 0;
 EWRAM_DATA static u32 sFeebasRngValue = 0;
+
+// Linked co-op: wild battles are doubles. The table the wild Pokémon was just
+// rolled from is kept so the battle can roll a second one from it (see
+// Coop_AddSecondWildMon). NULL for roamers, scripted and legendary battles.
+#define COOP_WILD_AREA_FISHING 0x80 // | rod
+EWRAM_DATA static const struct WildPokemonInfo *sCoopWildInfo = NULL;
+EWRAM_DATA static u8 sCoopWildArea = 0;
+EWRAM_DATA static bool8 sCoopHalveRate = FALSE; // Both players can trigger step encounters
 
 #include "data/wild_encounters.h"
 
@@ -419,6 +428,12 @@ static void CreateWildMon(u16 species, u8 level)
 #define TRY_GET_ABILITY_INFLUENCED_WILD_MON_INDEX(wildPokemon, type, ability, ptr, count) TryGetAbilityInfluencedWildMonIndex(wildPokemon, type, ability, ptr)
 #endif
 
+static void SetCoopSecondWild(const struct WildPokemonInfo *wildMonInfo, u8 area)
+{
+    sCoopWildInfo = wildMonInfo;
+    sCoopWildArea = area;
+}
+
 static bool8 TryGenerateWildMon(const struct WildPokemonInfo *wildMonInfo, u8 area, u8 flags)
 {
     u8 wildMonIndex = 0;
@@ -502,6 +517,8 @@ static bool8 EncounterOddsCheck(u16 encounterRate)
 static bool8 WildEncounterCheck(u32 encounterRate, bool8 ignoreAbility)
 {
     encounterRate *= 16;
+    if (sCoopHalveRate)
+        encounterRate /= 2; // Linked co-op: each player's steps can find Pokémon, at half the rate
     if (TestPlayerAvatarFlags(PLAYER_AVATAR_FLAG_MACH_BIKE | PLAYER_AVATAR_FLAG_ACRO_BIKE))
         encounterRate = encounterRate * 80 / 100;
     ApplyFluteEncounterRateMod(&encounterRate);
@@ -549,7 +566,21 @@ static bool8 AreLegendariesInSootopolisPreventingEncounters(void)
     return FlagGet(FLAG_LEGENDARIES_IN_SOOTOPOLIS);
 }
 
+static bool8 StandardWildEncounterInternal(u16 curMetatileBehavior, u16 prevMetatileBehavior);
+
 bool8 StandardWildEncounter(u16 curMetatileBehavior, u16 prevMetatileBehavior)
+{
+    bool8 result;
+
+    // Linked co-op: while Player 2 walks around, both players' steps can start
+    // encounters, each at half the normal rate.
+    sCoopHalveRate = COOP_LINKED && gCoopLinkActive && CoopP2_IsWalking();
+    result = StandardWildEncounterInternal(curMetatileBehavior, prevMetatileBehavior);
+    sCoopHalveRate = FALSE;
+    return result;
+}
+
+static bool8 StandardWildEncounterInternal(u16 curMetatileBehavior, u16 prevMetatileBehavior)
 {
     u16 headerId;
     struct Roamer *roamer;
@@ -614,6 +645,7 @@ bool8 StandardWildEncounter(u16 curMetatileBehavior, u16 prevMetatileBehavior)
             {
                 if (DoMassOutbreakEncounterTest() == TRUE && SetUpMassOutbreakEncounter(WILD_CHECK_REPEL | WILD_CHECK_KEEN_EYE) == TRUE)
                 {
+                    SetCoopSecondWild(gWildMonHeaders[headerId].landMonsInfo, WILD_AREA_LAND);
                     BattleSetup_StartWildBattle();
                     return TRUE;
                 }
@@ -621,6 +653,7 @@ bool8 StandardWildEncounter(u16 curMetatileBehavior, u16 prevMetatileBehavior)
                 // try a regular wild land encounter
                 if (TryGenerateWildMon(gWildMonHeaders[headerId].landMonsInfo, WILD_AREA_LAND, WILD_CHECK_REPEL | WILD_CHECK_KEEN_EYE) == TRUE)
                 {
+                    SetCoopSecondWild(gWildMonHeaders[headerId].landMonsInfo, WILD_AREA_LAND);
                     BattleSetup_StartWildBattle();
                     return TRUE;
                 }
@@ -653,6 +686,7 @@ bool8 StandardWildEncounter(u16 curMetatileBehavior, u16 prevMetatileBehavior)
             {
                 if (TryGenerateWildMon(gWildMonHeaders[headerId].waterMonsInfo, WILD_AREA_WATER, WILD_CHECK_REPEL | WILD_CHECK_KEEN_EYE) == TRUE)
                 {
+                    SetCoopSecondWild(gWildMonHeaders[headerId].waterMonsInfo, WILD_AREA_WATER);
                     BattleSetup_StartWildBattle();
                     return TRUE;
                 }
@@ -680,6 +714,7 @@ void RockSmashWildEncounter(void)
         else if (WildEncounterCheck(wildPokemonInfo->encounterRate, TRUE) == TRUE
          && TryGenerateWildMon(wildPokemonInfo, WILD_AREA_ROCKS, WILD_CHECK_REPEL | WILD_CHECK_KEEN_EYE) == TRUE)
         {
+            SetCoopSecondWild(wildPokemonInfo, WILD_AREA_ROCKS);
             BattleSetup_StartWildBattle();
             gSpecialVar_Result = TRUE;
         }
@@ -742,6 +777,7 @@ bool8 SweetScentWildEncounter(void)
             else
                 TryGenerateWildMon(gWildMonHeaders[headerId].landMonsInfo, WILD_AREA_LAND, 0);
 
+            SetCoopSecondWild(gWildMonHeaders[headerId].landMonsInfo, WILD_AREA_LAND);
             BattleSetup_StartWildBattle();
             return TRUE;
         }
@@ -759,6 +795,7 @@ bool8 SweetScentWildEncounter(void)
             }
 
             TryGenerateWildMon(gWildMonHeaders[headerId].waterMonsInfo, WILD_AREA_WATER, 0);
+            SetCoopSecondWild(gWildMonHeaders[headerId].waterMonsInfo, WILD_AREA_WATER);
             BattleSetup_StartWildBattle();
             return TRUE;
         }
@@ -794,6 +831,7 @@ void FishingWildEncounter(u8 rod)
     }
     IncrementGameStat(GAME_STAT_FISHING_ENCOUNTERS);
     SetPokemonAnglerSpecies(species);
+    SetCoopSecondWild(gWildMonHeaders[GetCurrentMapWildMonHeaderId()].fishingMonsInfo, COOP_WILD_AREA_FISHING | rod);
     BattleSetup_StartWildBattle();
 }
 
@@ -964,4 +1002,34 @@ static void ApplyCleanseTagEncounterRateMod(u32 *encRate)
 {
     if (GetMonData(&gPlayerParty[0], MON_DATA_HELD_ITEM) == ITEM_CLEANSE_TAG)
         *encRate = *encRate * 2 / 3;
+}
+
+// Linked co-op: a co-op wild battle is a double battle. The second wild
+// Pokémon is rolled separately from the same table as the first (land, water,
+// Rock Smash or the same fishing rod), so it's usually a different Pokémon but
+// can be the same species if the roll says so. Called from Coop_InitBattle.
+void Coop_AddSecondWildMon(void)
+{
+    const struct WildPokemonInfo *wildMonInfo = sCoopWildInfo;
+    struct Pokemon firstMon;
+
+    sCoopWildInfo = NULL;
+    if (wildMonInfo == NULL)
+        return;
+
+    // Generating replaces gEnemyParty[0], so keep the first Pokémon aside.
+    firstMon = gEnemyParty[0];
+    if (sCoopWildArea & COOP_WILD_AREA_FISHING)
+        GenerateFishingWildMon(wildMonInfo, sCoopWildArea & ~COOP_WILD_AREA_FISHING);
+    else
+        TryGenerateWildMon(wildMonInfo, sCoopWildArea, 0); // No Repel check: the encounter already happened
+    SetWildMonHeldItem(); // Same held item chances as the first one (it works on gEnemyParty[0])
+    gEnemyParty[1] = gEnemyParty[0];
+    gEnemyParty[0] = firstMon;
+}
+
+// Called at the start of every battle: the table only applies to the battle it was rolled for.
+void Coop_ForgetWildEncounter(void)
+{
+    sCoopWildInfo = NULL;
 }

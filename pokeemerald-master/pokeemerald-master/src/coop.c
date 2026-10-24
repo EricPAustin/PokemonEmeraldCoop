@@ -4,6 +4,7 @@
 #include "battle_message.h"
 #include "coop.h"
 #include "coop_link.h"
+#include "wild_encounter.h"
 #include "event_data.h"
 #include "strings.h"
 #include "battle_setup.h"
@@ -513,8 +514,17 @@ bool8 Coop_IsMirrorBattle(void)
     return gCoopMirrorBattle;
 }
 
+static void InitCoopBattle(void);
+
 // Called from CB2_InitBattleInternal once the enemy party has been created.
 void Coop_InitBattle(void)
+{
+    InitCoopBattle();
+    Coop_ForgetWildEncounter();
+    CoopP2_ClearEncounterPos();
+}
+
+static void InitCoopBattle(void)
 {
     gCoopBattle = FALSE;
 
@@ -536,6 +546,10 @@ void Coop_InitBattle(void)
     if ((gBattleTypeFlags & BATTLE_TYPE_TRAINER)
      && !(gBattleTypeFlags & (BATTLE_TYPE_TWO_OPPONENTS | BATTLE_TYPE_SECRET_BASE)))
         AddMirrorOpponent();
+
+    // Wild Pokémon come in pairs (not roamers, legendaries or scripted battles).
+    if (!(gBattleTypeFlags & BATTLE_TYPE_TRAINER))
+        Coop_AddSecondWildMon();
 }
 
 bool8 IsCoopBattle(void)
