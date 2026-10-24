@@ -19,8 +19,11 @@ battles, same saves.
   and use PCs. Whoever started the conversation answers its menus.
 - **Tether:** the players can't get more than 7 tiles apart sideways or 6 up/down. You can always
   walk back toward each other. If a cutscene moves P1 away, P2 is moved next to P1.
-- While P1 surfs, bikes or dives, P2 rides along (hidden on P1's tile) and hops off next to P1
-  once P1 is standing still on foot again.
+- **Surfing together:** either player can start surfing. Whoever starts brings the other along:
+  the other player appears on the water right next to them, surfing too. After that each player
+  surfs and lands on their own (still within the tether).
+- While P1 bikes or dives, P2 rides along (hidden on P1's tile) and hops off next to P1
+  once P1 is standing still again.
 
 ### Who controls what
 | Situation | Who presses buttons |
@@ -40,6 +43,16 @@ same one. Player 1's starter fights the Zigzagoon alone (that first battle is sc
 battle); co-op double battles start from the next battle. In linked co-op, Player 2's buttons pick
 Player 2's starter.
 
+
+### Surfing together
+- **Player 2 starts:** P2 faces the water and presses A. P2 answers "Would you like to SURF?"
+  (P2's own Pokémon with Surf is used first, otherwise any party Pokémon with Surf). P2 jumps on,
+  and if P1 is on land, P1 (and P1's screen) jumps onto the water next to P2.
+- **Player 1 starts:** as normal. Once P1 is on the water, P2 appears on the water next to P1.
+- If the other player is already surfing, nobody gets moved.
+- Both need the 5th badge (Balance Badge), as usual.
+- P2 surfs at running speed, like P1, and hops off onto land by walking into the shore.
+- Battles, menus and saving don't knock P2 off the water.
 
 ### Party screen
 The party screen outside battle now looks like the one in co-op battles: Player 1's lead (blue)
@@ -93,7 +106,7 @@ If they ever differ, you get "The two save files don't match!": copy `.sav` over
 ## Not available during co-op
 - The Cable Club, Wireless Club, Union Room, record mixing, link contests and link battles
   (the attendants just say "please visit again"). The link cable is busy with co-op.
-- Player 2 can't surf. Trainers only spot Player 1.
+- Player 2 can't use Waterfall or Dive (Player 1 does those; P2 follows). Trainers only spot Player 1.
 - Player 2 can only use doors on the map Player 1 is on (not doors just across a route border).
 - Fast-forwarding one window doesn't help: each game waits for the other.
 
@@ -120,6 +133,15 @@ Two linked mGBA cores, scripted inputs, comparing both games' state every 32 fra
 - Tested: Player 1 with a save and Player 2 with none both pick NEW GAME. The introduction, naming,
   the truck, arriving in Littleroot and walking into the house stay in sync (about 15,000 frames).
   Player 2 appears next to Player 1 once the cutscenes let go.
+
+## Surfing together: testing
+- Route 103, both linked: P2 used Surf from the shore, P1 was on land 4 tiles away and jumped onto
+  the water next to P2; both surfed around, P2 landed, P1 landed, then P1 used Surf and P2 appeared
+  on the water next to P1. P2 using Surf while P1 was already surfing didn't move P1. Opening the
+  START menu and party while surfing kept P2 on the water. No desync in any run, including a 28,000-frame
+  random soak with wild battles.
+- Fixed on the way: Player 2's surfing sprite was cut off (the sprite had room for a walking frame
+  only). The rival sprites now reserve room for the bigger surfing frames.
 
 ## Always linked
 - A on CONTINUE or NEW GAME always starts the co-op link (SELECT still works too). OPTION and
@@ -148,6 +170,8 @@ Two linked mGBA cores, scripted inputs, comparing both games' state every 32 fra
 - Talking to Player 2 does nothing (it used to run a random script).
 
 ## How to undo it
+Surfing together is not a patch file: it is the git branch `feature/surf-together` (undo with `git revert`).
+The patches below are older history, from before the source was in git:
 ```
 patch -R -p1 < "../../coop-always-linked.patch" # goes back to SELECT to link (A plays solo)
 patch -R -p1 < "../../coop-new-game.patch"     # removes starting from NEW GAME (after the line above)

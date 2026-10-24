@@ -17,15 +17,26 @@
 #include "constants/event_object_movement.h"
 #include "constants/event_objects.h"
 #include "constants/flags.h"
+#include "constants/field_effects.h"
+#include "constants/moves.h"
+#include "event_scripts.h"
+#include "field_effect.h"
+#include "field_effect_helpers.h"
+#include "party_menu.h"
+#include "pokemon.h"
 
 // Linked co-op: Player 2's character in the overworld.
 //
 // Player 1 is the game's normal player character: it triggers doors, scripts,
 // wild encounters and trainers. Player 2 is an extra object event that walks
 // around with Player 2's buttons, within COOP_TETHER_X/Y tiles of Player 1.
-// While Player 1 surfs, bikes or dives, and right after map changes, Player 2
-// "rides along" (hidden on Player 1's tile) and hops off next to Player 1 as
-// soon as Player 1 is standing still on foot.
+// While Player 1 bikes or dives, and right after map changes, Player 2 "rides
+// along" (hidden on Player 1's tile) and hops off next to Player 1 as soon as
+// Player 1 is standing still.
+//
+// Surfing: either player can start surfing. Whoever starts brings the other
+// along: the other player appears on the water next to them, surfing too.
+// After that each player surfs and lands on their own.
 //
 // Everything here runs inside the shared simulated frame and only reads state
 // that is identical on both GBAs, so both games move Player 2 the same way.
@@ -65,7 +76,7 @@ bool8 CoopP2_IsWalking(void)
 
 static bool8 MustRideAlong(void)
 {
-    return (gPlayerAvatar.flags & (PLAYER_AVATAR_FLAG_SURFING | PLAYER_AVATAR_FLAG_UNDERWATER
+    return (gPlayerAvatar.flags & (PLAYER_AVATAR_FLAG_UNDERWATER
                                  | PLAYER_AVATAR_FLAG_MACH_BIKE | PLAYER_AVATAR_FLAG_ACRO_BIKE)) != 0;
 }
 
@@ -145,10 +156,297 @@ static bool8 IsGoodSpotForP2(const struct ObjectEvent *p2, s16 x, s16 y, u8 elev
     return !IsAnyObjectAt(p2, x, y);
 }
 
+// ---------------------------------------------------------------------------
+// Surfing
+
+#define SHOW_MON_CRY_NO_DUCKING (1u << 31) // See field_effect.c
+
+static u8 GetP2GraphicsId(u8 state)
+{
+    return GetRivalAvatarGraphicsIdByStateIdAndGender(state, Coop_GetPlayer2Gender());
+}
+
+static u8 GetObjectId(const struct ObjectEvent *objectEvent)
+{
+    return objectEvent - gObjectEvents;
+}
+
+// Player 2's surfing state is their sprite, so it survives battles and saves.
+static bool8 IsP2Surfing(const struct ObjectEvent *p2)
+{
+    return p2->graphicsId == GetP2GraphicsId(PLAYER_AVATAR_STATE_SURFING);
+}
+
+static u8 FindSurfBlob(u8 objectEventId)
+{
+    s32 i;
+
+    for (i = 0; i < MAX_SPRITES; i++)
+    {
+        if (gSprites[i].inUse && gSprites[i].callback == UpdateSurfBlobFieldEffect
+         && gSprites[i].data[2] == objectEventId) // sPlayerObjId
+            return i;
+    }
+    return MAX_SPRITES;
+}
+
+static u8 CreateSurfBlob(s16 x, s16 y, u8 objectEventId, u8 bobState)
+{
+    u32 savedArgs[3];
+    u8 spriteId;
+
+    // Don't disturb a field effect argument a script may have set up.
+    savedArgs[0] = gFieldEffectArguments[0];
+    savedArgs[1] = gFieldEffectArguments[1];
+    savedArgs[2] = gFieldEffectArguments[2];
+    gFieldEffectArguments[0] = x;
+    gFieldEffectArguments[1] = y;
+    gFieldEffectArguments[2] = objectEventId;
+    spriteId = FieldEffectStart(FLDEFF_SURF_BLOB);
+    if (spriteId < MAX_SPRITES)
+        SetSurfBlob_BobState(spriteId, bobState);
+    gFieldEffectArguments[0] = savedArgs[0];
+    gFieldEffectArguments[1] = savedArgs[1];
+    gFieldEffectArguments[2] = savedArgs[2];
+    return spriteId;
+}
+
+// Instantly puts Player 2 on a surfing Pokémon (sprite and blob).
+static void StartP2SurfState(struct ObjectEvent *p2)
+{
+    if (!IsP2Surfing(p2))
+    {
+        ObjectEventSetGraphicsId(p2, GetP2GraphicsId(PLAYER_AVATAR_STATE_SURFING));
+        ObjectEventTurn(p2, p2->facingDirection);
+    }
+    if (FindSurfBlob(GetObjectId(p2)) == MAX_SPRITES)
+        CreateSurfBlob(p2->currentCoords.x, p2->currentCoords.y, GetObjectId(p2), BOB_PLAYER_AND_MON);
+}
+
+// Instantly takes Player 2 off the water.
+static void StopP2SurfState(struct ObjectEvent *p2)
+{
+    u8 blobId = FindSurfBlob(GetObjectId(p2));
+
+    if (blobId != MAX_SPRITES)
+        DestroySprite(&gSprites[blobId]);
+    if (IsP2Surfing(p2))
+    {
+        ObjectEventSetGraphicsId(p2, GetP2GraphicsId(PLAYER_AVATAR_STATE_NORMAL));
+        ObjectEventTurn(p2, p2->facingDirection);
+        gSprites[p2->spriteId].y2 = 0;
+    }
+}
+
+static bool8 IsSurfableAt(s16 x, s16 y)
+{
+    u8 behavior = MapGridGetMetatileBehaviorAt(x, y);
+    return MetatileBehavior_IsSurfableWaterOrUnderwater(behavior) && !MetatileBehavior_IsWaterfall(behavior);
+}
+
+// Can a surfing player be placed on this tile?
+static bool8 IsGoodSurfSpot(const struct ObjectEvent *self, s16 x, s16 y, bool8 currentMapOnly)
+{
+    s32 borderId = GetMapBorderIdAt(x, y);
+
+    if (borderId == CONNECTION_INVALID || (currentMapOnly && borderId != CONNECTION_NONE))
+        return FALSE;
+    if (MapGridGetCollisionAt(x, y) || !IsSurfableAt(x, y))
+        return FALSE;
+    return !IsAnyObjectAt(self, x, y);
+}
+
+// A free water tile next to (x, y): beside first, then ahead, behind, diagonal.
+static bool8 FindSurfSpotNear(const struct ObjectEvent *self, s16 x, s16 y, u8 facing, bool8 currentMapOnly, s16 *outX, s16 *outY)
+{
+    // [0]: facing north/south (beside = west/east), [1]: facing west/east
+    static const s8 sOffsets[2][8][2] = {
+        {{-1, 0}, {1, 0}, {0, -1}, {0, 1}, {-1, -1}, {1, -1}, {-1, 1}, {1, 1}},
+        {{0, -1}, {0, 1}, {-1, 0}, {1, 0}, {-1, -1}, {1, -1}, {-1, 1}, {1, 1}},
+    };
+    u8 set = (facing == DIR_NORTH || facing == DIR_SOUTH) ? 0 : 1;
+    s32 i;
+
+    for (i = 0; i < 8; i++)
+    {
+        s16 spotX = x + sOffsets[set][i][0];
+        s16 spotY = y + sOffsets[set][i][1];
+        if (IsGoodSurfSpot(self, spotX, spotY, currentMapOnly))
+        {
+            *outX = spotX;
+            *outY = spotY;
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+static void PlaceP2At(struct ObjectEvent *p2, s16 x, s16 y, u8 facing, bool8 surfing)
+{
+    ObjectEventClearHeldMovementIfActive(p2);
+    MoveObjectEventToMapCoords(p2, x, y);
+    ObjectEventUpdateElevation(p2);
+    p2->invisible = FALSE;
+    if (surfing)
+        StartP2SurfState(p2);
+    else
+        StopP2SurfState(p2);
+    ObjectEventTurn(p2, facing);
+}
+
+// Player 2 started surfing while Player 1 is on land: Player 1 appears on the
+// water next to Player 2, surfing too. The camera jumps with Player 1.
+static bool8 TryTeleportP1ToSurfNextTo(const struct ObjectEvent *p2)
+{
+    struct ObjectEvent *p1 = GetPlayer1();
+    s16 x, y;
+
+    if (gFieldCamera.x != 0 || gFieldCamera.y != 0)
+        return FALSE; // Camera mid-scroll (shouldn't happen: everyone is standing still)
+    // Only within Player 1's current map, so the camera doesn't cross a map connection.
+    if (!FindSurfSpotNear(p1, p2->currentCoords.x, p2->currentCoords.y, p2->facingDirection, TRUE, &x, &y))
+        return FALSE;
+
+    MoveCameraAndRedrawMap(x - p1->currentCoords.x, y - p1->currentCoords.y);
+    MoveObjectEventToMapCoords(p1, x, y); // Also resets the camera object
+    ObjectEventUpdateElevation(p1);
+    ObjectEventSetGraphicsId(p1, GetPlayerAvatarGraphicsIdByStateId(PLAYER_AVATAR_STATE_SURFING));
+    ObjectEventTurn(p1, p2->facingDirection);
+    SetPlayerAvatarStateMask(PLAYER_AVATAR_FLAG_SURFING);
+    p1->fieldEffectSpriteId = CreateSurfBlob(x, y, gPlayerAvatar.objectEventId, BOB_PLAYER_AND_MON);
+    Overworld_ClearSavedMusic();
+    Overworld_ChangeMusicTo(MUS_SURF);
+    return TRUE;
+}
+
+// Player 1 just started surfing (vanilla Surf field effect finished): Player 2
+// appears on the water next to Player 1, surfing too.
+void CoopP2_OnPlayer1StartedSurfing(void)
+{
+    struct ObjectEvent *p1 = GetPlayer1();
+    struct ObjectEvent *p2 = CoopP2_GetObject();
+    s16 x, y;
+
+    if (p2 == NULL || p2->invisible || IsP2Surfing(p2))
+        return;
+    if (FindSurfSpotNear(p2, p1->currentCoords.x, p1->currentCoords.y, p1->facingDirection, FALSE, &x, &y))
+        PlaceP2At(p2, x, y, p1->facingDirection, TRUE);
+}
+
+// Index of the party Pokémon that uses Surf for Player 2 (Player 2's own first),
+// or PARTY_SIZE.
+static u8 FindP2SurfMon(void)
+{
+    s32 pass, i;
+
+    for (pass = 0; pass < 2; pass++)
+    {
+        for (i = 0; i < PARTY_SIZE; i++)
+        {
+            struct Pokemon *mon = &gPlayerParty[i];
+            if (GetMonData(mon, MON_DATA_SPECIES) == SPECIES_NONE || GetMonData(mon, MON_DATA_IS_EGG))
+                continue;
+            if ((pass == 0) != (GetMonCoopOwner(mon) == COOP_PLAYER_2))
+                continue;
+            if (MonKnowsMove(mon, MOVE_SURF))
+                return i;
+        }
+    }
+    return PARTY_SIZE;
+}
+
+void CoopP2_FindSurfMon(void)
+{
+    gSpecialVar_Result = FindP2SurfMon();
+}
+
+// Player 2 pressed A facing (x, y): can they surf onto it?
+static bool8 CanP2StartSurfing(struct ObjectEvent *p2, s16 x, s16 y, u8 dir)
+{
+    struct ObjectEvent *p1 = GetPlayer1();
+
+    if (IsP2Surfing(p2) || !FlagGet(FLAG_BADGE05_GET))
+        return FALSE;
+    if (p2->previousElevation != 3
+     || GetCollisionAtCoords(p2, x, y, dir) != COLLISION_ELEVATION_MISMATCH
+     || !MetatileBehavior_IsSurfableFishableWater(MapGridGetMetatileBehaviorAt(x, y))
+     || !IsWithinTether(x, y, p1->currentCoords.x, p1->currentCoords.y)
+     || IsAnyObjectAt(p2, x, y))
+        return FALSE;
+    return FindP2SurfMon() != PARTY_SIZE;
+}
+
+// Player 2 uses Surf (special from EventScript_CoopP2UseSurf, followed by waitstate).
+#define tState data[0]
+#define tMonId data[1]
+
+static void Task_CoopP2Surf(u8 taskId)
+{
+    struct Task *task = &gTasks[taskId];
+    struct ObjectEvent *p2 = CoopP2_GetObject();
+    s16 x, y;
+
+    if (p2 == NULL)
+    {
+        ScriptContext_Enable();
+        DestroyTask(taskId);
+        return;
+    }
+
+    switch (task->tState)
+    {
+    case 0:
+        gFieldEffectArguments[0] = task->tMonId | SHOW_MON_CRY_NO_DUCKING;
+        FieldEffectStart(FLDEFF_FIELD_MOVE_SHOW_MON_INIT);
+        task->tState++;
+        break;
+    case 1:
+        if (!FieldEffectActiveListContains(FLDEFF_FIELD_MOVE_SHOW_MON))
+        {
+            x = p2->currentCoords.x;
+            y = p2->currentCoords.y;
+            MoveCoords(p2->facingDirection, &x, &y);
+            UnfreezeObjectEvent(p2);
+            ObjectEventClearHeldMovementIfActive(p2);
+            ObjectEventSetGraphicsId(p2, GetP2GraphicsId(PLAYER_AVATAR_STATE_SURFING));
+            ObjectEventSetHeldMovement(p2, GetJumpSpecialMovementAction(p2->facingDirection));
+            CreateSurfBlob(x, y, GetObjectId(p2), BOB_NONE);
+            task->tState++;
+        }
+        break;
+    case 2:
+        if (ObjectEventClearHeldMovementIfFinished(p2))
+        {
+            u8 blobId = FindSurfBlob(GetObjectId(p2));
+            if (blobId != MAX_SPRITES)
+                SetSurfBlob_BobState(blobId, BOB_PLAYER_AND_MON);
+            ObjectEventUpdateElevation(p2);
+            ObjectEventTurn(p2, p2->facingDirection);
+            if (!(gPlayerAvatar.flags & (PLAYER_AVATAR_FLAG_SURFING | PLAYER_AVATAR_FLAG_UNDERWATER)))
+                TryTeleportP1ToSurfNextTo(p2);
+            ScriptContext_Enable();
+            DestroyTask(taskId);
+        }
+        break;
+    }
+}
+
+void CoopP2_StartSurfing(void)
+{
+    u8 taskId = CreateTask(Task_CoopP2Surf, 0xFF);
+    gTasks[taskId].tMonId = gFieldEffectArguments[0];
+}
+
+#undef tState
+#undef tMonId
+
+// ---------------------------------------------------------------------------
+
 static void RideAlong(struct ObjectEvent *p2)
 {
     struct ObjectEvent *p1 = GetPlayer1();
 
+    StopP2SurfState(p2);
     if (p2->currentCoords.x != p1->currentCoords.x || p2->currentCoords.y != p1->currentCoords.y)
         MoveObjectEventToMapCoords(p2, p1->currentCoords.x, p1->currentCoords.y);
     p2->currentElevation = p1->currentElevation;
@@ -174,7 +472,16 @@ static void PlaceP2NearP1(struct ObjectEvent *p2)
     struct ObjectEvent *p1 = GetPlayer1();
     u8 facing = p1->facingDirection;
     u8 dirs[4];
+    s16 surfX, surfY;
     s32 i;
+
+    // Player 1 is surfing: surf alongside.
+    if ((gPlayerAvatar.flags & PLAYER_AVATAR_FLAG_SURFING)
+     && FindSurfSpotNear(p2, p1->currentCoords.x, p1->currentCoords.y, facing, FALSE, &surfX, &surfY))
+    {
+        PlaceP2At(p2, surfX, surfY, facing, TRUE);
+        return;
+    }
 
     dirs[0] = OppositeDirection(facing);
     dirs[1] = (facing == DIR_NORTH || facing == DIR_SOUTH) ? DIR_WEST : DIR_NORTH;
@@ -188,10 +495,7 @@ static void PlaceP2NearP1(struct ObjectEvent *p2)
         MoveCoords(dirs[i], &x, &y);
         if (IsGoodSpotForP2(p2, x, y, p1->currentElevation))
         {
-            MoveObjectEventToMapCoords(p2, x, y);
-            ObjectEventUpdateElevation(p2);
-            p2->invisible = FALSE;
-            ObjectEventTurn(p2, facing);
+            PlaceP2At(p2, x, y, facing, FALSE);
             return;
         }
     }
@@ -201,7 +505,7 @@ static void PlaceP2NearP1(struct ObjectEvent *p2)
 static void SpawnP2(void)
 {
     struct ObjectEvent *p1 = GetPlayer1();
-    u8 graphicsId = GetRivalAvatarGraphicsIdByStateIdAndGender(PLAYER_AVATAR_STATE_NORMAL, Coop_GetPlayer2Gender());
+    u8 graphicsId = GetP2GraphicsId(PLAYER_AVATAR_STATE_NORMAL);
     u8 objEventId = SpawnSpecialObjectEventParameterized(graphicsId, MOVEMENT_TYPE_PLAYER, LOCALID_COOP_PLAYER2,
                                                           p1->currentCoords.x, p1->currentCoords.y, p1->currentElevation);
 
@@ -324,10 +628,49 @@ static bool8 TryP2Interaction(struct ObjectEvent *p2)
 
     MoveCoords(dir, &x, &y);
     if (!Coop_TryStartInteractionAt(x, y, p2->currentElevation, dir))
-        return FALSE;
+    {
+        if (!CanP2StartSurfing(p2, x, y, dir))
+            return FALSE;
+        ScriptContext_SetupScript(EventScript_CoopP2UseSurf);
+    }
     sP2Interacting = TRUE;
     gCoopInputOwner = COOP_PLAYER_2; // Player 2 answers this conversation
     return TRUE;
+}
+
+static void TryStartP2SurfStep(struct ObjectEvent *p2, u8 dir)
+{
+    struct ObjectEvent *p1 = GetPlayer1();
+    s16 x = p2->currentCoords.x;
+    s16 y = p2->currentCoords.y;
+    u8 collision;
+
+    MoveCoords(dir, &x, &y);
+    if (IsWithinTether(x, y, p1->currentCoords.x, p1->currentCoords.y))
+    {
+        collision = GetCollisionAtCoords(p2, x, y, dir);
+        if (collision == COLLISION_NONE && IsSurfableAt(x, y))
+        {
+            // Surfing is as fast as running.
+            ObjectEventSetHeldMovement(p2, GetWalkFastMovementAction(dir));
+            SpawnObjectsAroundP2();
+            return;
+        }
+        if (collision == COLLISION_ELEVATION_MISMATCH && !IsSurfableAt(x, y)
+         && MapGridGetElevationAt(x, y) == 3 && !IsAnyObjectAt(p2, x, y))
+        {
+            // Hop off onto land (the surfing sprite is swapped once the jump ends).
+            u8 blobId = FindSurfBlob(GetObjectId(p2));
+            if (blobId != MAX_SPRITES)
+                SetSurfBlob_BobState(blobId, BOB_JUST_MON);
+            ObjectEventSetHeldMovement(p2, GetJumpSpecialMovementAction(dir));
+            SpawnObjectsAroundP2();
+            return;
+        }
+    }
+
+    if (p2->facingDirection != dir)
+        ObjectEventSetHeldMovement(p2, GetFaceDirectionMovementAction(dir));
 }
 
 static void TryStartP2Step(struct ObjectEvent *p2)
@@ -339,6 +682,12 @@ static void TryStartP2Step(struct ObjectEvent *p2)
 
     if (dir == DIR_NONE)
         return;
+
+    if (IsP2Surfing(p2))
+    {
+        TryStartP2SurfStep(p2, dir);
+        return;
+    }
 
     // Exit mats and other arrow warps: pushing toward them takes both players out.
     if (Coop_TryStepWarpAt(p2->currentCoords.x, p2->currentCoords.y, p2->currentElevation, dir, TRUE))
@@ -405,8 +754,8 @@ void CoopP2_Update(void)
         return;
     }
 
-    if (FuncIsActiveTask(Task_CoopP2DoorWarp))
-        return; // Walking through a door
+    if (FuncIsActiveTask(Task_CoopP2DoorWarp) || FuncIsActiveTask(Task_CoopP2Surf))
+        return; // Walking through a door, jumping onto the water
 
     if (MustRideAlong())
     {
@@ -429,6 +778,16 @@ void CoopP2_Update(void)
     // Still in the middle of a step?
     if (ObjectEventIsHeldMovementActive(p2) && !ObjectEventClearHeldMovementIfFinished(p2))
         return;
+
+    // Surfing follows the tile Player 2 is on: hopping off onto land ends it,
+    // and the surf blob comes back after battles and menus.
+    if (IsP2Surfing(p2))
+    {
+        if (!IsSurfableAt(p2->currentCoords.x, p2->currentCoords.y))
+            StopP2SurfState(p2);
+        else
+            StartP2SurfState(p2);
+    }
 
     // Player 1 got moved too far away (cutscene, forced movement...): catch up.
     if (!IsWithinTether(p2->currentCoords.x, p2->currentCoords.y, p1->currentCoords.x, p1->currentCoords.y))

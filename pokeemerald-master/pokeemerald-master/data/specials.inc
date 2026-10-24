@@ -545,3 +545,5 @@ gSpecials::
 	def_special Coop_BufferPlayer2Starter
 	def_special Coop_GiveInputToPlayer2
 	def_special Coop_GiveInputToPlayer1
+	def_special CoopP2_FindSurfMon
+	def_special CoopP2_StartSurfing

@@ -25,13 +25,13 @@ For how the co-op works in detail (controls, saving, error messages, testing don
 
 ## Roadmap
 - **Phase 0 – Setup:** private GitHub repo ✅, clean build running in mGBA, this file in place ✅.
-- **Phase 1 – Two players exist:** ✅ P2 character, P2 starter, split teams, shared save, NEW GAME/CONTINUE in co-op, P2 can use doors/warps. P2 picks their own gender and name in Birch's intro and can nickname their starter in Birch's lab.
+- **Phase 1 – Two players exist:** ✅ P2 character, P2 starter, split teams, shared save, NEW GAME/CONTINUE in co-op, P2 can use doors/warps. P2 picks their own gender and name in Birch's intro and can nickname their starter in Birch's lab. Surfing together: either player can start surfing and the other appears on the water next to them.
 - **Phase 2 – Co-op battles:** ✅ multi battles, each player picks their own Pokémon's moves ("NAME: What will..."). P2's trainer back sprite slides in and throws P2's Pokémon. To do: wild double battles, edge cases below.
 - **Phase 3 – Doubled trainers:** ✅ generated "mirrored partner" for every trainer (same class, different species, same levels, ≤3 Pokémon per side). To do: hand-tune notable fights (gyms, Elite Four, Champion).
 - **Phase 4 – Content:** casino (can reuse Mauville Game Corner code), new/changed maps, story additions.
 
 ## Known limitations (from the notes)
-- P2 can't surf (rides along hidden on P1's tile). Trainers only spot P1.
+- P2 can't use Waterfall or Dive (P1 does those and P2 follows). While P1 bikes or dives, P2 rides along hidden on P1's tile. Trainers only spot P1.
 - P2 can only use doors on P1's current map.
 - Cable Club, Union Room, record mixing, link battles/contests are disabled (link cable is busy).
 - P1's starter fights the first Zigzagoon alone (scripted single battle).
@@ -86,6 +86,7 @@ Then each time:
 - 2026-10-23: Player 2 update (playtested OK): P2 gender + name in Birch's intro, P2 nickname for their starter in the lab, P2's name on the starter screen and CO-OP TEAMS PC, P2 overworld sprite follows P2's gender, P2 trainer back sprite in co-op battles (each player throws their own Pokémon, using the multi-battle send-out path).
 - 2026-10-23: first playtest of the Player 2 update by Declan + Eric. Fixes from it: P1 always picks the starter first (even if P2 opened the bag) and the starter screen names whose turn it is; battle prompts use player names instead of P1/P2; Pokémon Center nurse no longer prints a garbage "player is waiting in the Union Room" message (co-op skipped clearing that name).
 - 2026-10-23: re-tested those fixes: all work.
+- 2026-10-23: Surfing together (branch `feature/surf-together`, built on the Player 2 update): either player can start surfing (P2 faces water + A, same yes/no prompt, P2's own Surf Pokémon first); the other player appears on the water next to them (if P1 is on land when P2 starts, P1 and P1's camera jump onto the water). Each player then surfs and lands on their own. P2's surfing state is stored as P2's sprite, so it survives battles, menus and saves. Rival normal sprites now reserve 32x32 tile space so P2's surfing sprite isn't cut off. Tested in the two-GBA harness (both P2 genders): no desyncs. Needs a playtest before merging to master.
 - Next:
   1. Test linking across two PCs on the home network.
   2. Wild double battles.

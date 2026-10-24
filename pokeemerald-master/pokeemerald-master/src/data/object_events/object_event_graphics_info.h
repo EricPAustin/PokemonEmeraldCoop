@@ -1921,7 +1921,7 @@ const struct ObjectEventGraphicsInfo gObjectEventGraphicsInfo_RivalBrendanNormal
     .tileTag = TAG_NONE,
     .paletteTag = OBJ_EVENT_PAL_TAG_BRENDAN,
     .reflectionPaletteTag = OBJ_EVENT_PAL_TAG_BRIDGE_REFLECTION,
-    .size = 256,
+    .size = 512, // Linked co-op: room for the 32x32 surfing sprite (Player 2)
     .width = 16,
     .height = 32,
     .paletteSlot = PALSLOT_NPC_SPECIAL,
@@ -2016,7 +2016,7 @@ const struct ObjectEventGraphicsInfo gObjectEventGraphicsInfo_RivalMayNormal = {
     .tileTag = TAG_NONE,
     .paletteTag = OBJ_EVENT_PAL_TAG_MAY,
     .reflectionPaletteTag = OBJ_EVENT_PAL_TAG_BRIDGE_REFLECTION,
-    .size = 256,
+    .size = 512, // Linked co-op: room for the 32x32 surfing sprite (Player 2)
     .width = 16,
     .height = 32,
     .paletteSlot = PALSLOT_NPC_SPECIAL,
