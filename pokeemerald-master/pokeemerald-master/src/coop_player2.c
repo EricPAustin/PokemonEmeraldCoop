@@ -554,6 +554,42 @@ static void SpawnObjectsAroundP2(void)
 
 static bool8 sP2Interacting; // The running script was started by Player 2
 static bool8 sP2Stepped;     // Player 2's current movement is a step (check for warps when it ends)
+static bool8 sP2EncounterStep; // Player 2's current movement is a step (check for wild Pokémon when it ends)
+
+// Where the wild Pokémon was found, when Player 2 found it (for the battle
+// background and transition). Cleared when the battle starts.
+static EWRAM_DATA bool8 sEncounterPosSet = FALSE;
+static EWRAM_DATA s16 sEncounterX = 0;
+static EWRAM_DATA s16 sEncounterY = 0;
+static EWRAM_DATA bool8 sEncounterSurfing = FALSE;
+
+bool8 CoopP2_GetEncounterPos(s16 *x, s16 *y, bool8 *surfing)
+{
+    if (!sEncounterPosSet)
+        return FALSE;
+    *x = sEncounterX;
+    *y = sEncounterY;
+    *surfing = sEncounterSurfing;
+    return TRUE;
+}
+
+void CoopP2_ClearEncounterPos(void)
+{
+    sEncounterPosSet = FALSE;
+}
+
+// Player 2 just finished a step: maybe a wild Pokémon appears.
+static bool8 TryP2WildEncounter(struct ObjectEvent *p2)
+{
+    sEncounterPosSet = TRUE;
+    sEncounterX = p2->currentCoords.x;
+    sEncounterY = p2->currentCoords.y;
+    sEncounterSurfing = IsP2Surfing(p2);
+    if (Coop_TryWildEncounterAt(p2->currentCoords.x, p2->currentCoords.y))
+        return TRUE;
+    sEncounterPosSet = FALSE;
+    return FALSE;
+}
 
 // Player 2 walks through a door: open it, step in, close it, then both players warp.
 #define tState  data[0]
@@ -653,6 +689,7 @@ static void TryStartP2SurfStep(struct ObjectEvent *p2, u8 dir)
         {
             // Surfing is as fast as running.
             ObjectEventSetHeldMovement(p2, GetWalkFastMovementAction(dir));
+            sP2EncounterStep = TRUE;
             SpawnObjectsAroundP2();
             return;
         }
@@ -716,6 +753,7 @@ static void TryStartP2Step(struct ObjectEvent *p2)
         {
             ObjectEventSetHeldMovement(p2, GetJump2MovementAction(dir));
             sP2Stepped = TRUE;
+            sP2EncounterStep = TRUE;
             SpawnObjectsAroundP2();
             return;
         }
@@ -729,6 +767,7 @@ static void TryStartP2Step(struct ObjectEvent *p2)
         else
             ObjectEventSetHeldMovement(p2, GetWalkNormalMovementAction(dir));
         sP2Stepped = TRUE;
+        sP2EncounterStep = TRUE;
         SpawnObjectsAroundP2();
         return;
     }
@@ -760,6 +799,7 @@ void CoopP2_Update(void)
     if (MustRideAlong())
     {
         sP2Stepped = FALSE;
+        sP2EncounterStep = FALSE;
         RideAlong(p2);
         return;
     }
@@ -767,6 +807,7 @@ void CoopP2_Update(void)
     if (p2->invisible)
     {
         sP2Stepped = FALSE;
+        sP2EncounterStep = FALSE;
         // Riding along: hop off once Player 1 stands still with free controls.
         if (!ArePlayerFieldControlsLocked() && gPlayerAvatar.tileTransitionState == T_NOT_MOVING)
             PlaceP2NearP1(p2);
@@ -797,13 +838,24 @@ void CoopP2_Update(void)
     }
 
     if (ArePlayerFieldControlsLocked())
+    {
+        sP2EncounterStep = FALSE;
         return; // Menus and cutscenes: Player 2 waits
+    }
 
     // Just stepped onto stairs, a ladder, a cave entrance...: both players warp.
     if (sP2Stepped)
     {
         sP2Stepped = FALSE;
         if (Coop_TryStepWarpAt(p2->currentCoords.x, p2->currentCoords.y, p2->currentElevation, p2->facingDirection, FALSE))
+            return;
+    }
+
+    // Wild Pokémon (land or water, like Player 1's steps).
+    if (sP2EncounterStep)
+    {
+        sP2EncounterStep = FALSE;
+        if (TryP2WildEncounter(p2))
             return;
     }
 

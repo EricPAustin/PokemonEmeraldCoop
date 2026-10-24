@@ -635,12 +635,22 @@ static void CB2_EndScriptedWildBattle(void)
     }
 }
 
+// Where the wild Pokémon was found: Player 1's tile, or Player 2's in linked co-op.
+static void GetEncounterCoords(s16 *x, s16 *y, bool8 *surfing)
+{
+    if (COOP_LINKED && CoopP2_GetEncounterPos(x, y, surfing))
+        return;
+    PlayerGetDestCoords(x, y);
+    *surfing = TestPlayerAvatarFlags(PLAYER_AVATAR_FLAG_SURFING);
+}
+
 u8 BattleSetup_GetEnvironmentId(void)
 {
     u16 tileBehavior;
     s16 x, y;
+    bool8 surfing;
 
-    PlayerGetDestCoords(&x, &y);
+    GetEncounterCoords(&x, &y, &surfing);
     tileBehavior = MapGridGetMetatileBehaviorAt(x, y);
 
     if (MetatileBehavior_IsTallGrass(tileBehavior))
@@ -678,7 +688,7 @@ u8 BattleSetup_GetEnvironmentId(void)
         return BATTLE_ENVIRONMENT_POND;
     if (MetatileBehavior_IsMountain(tileBehavior))
         return BATTLE_ENVIRONMENT_MOUNTAIN;
-    if (TestPlayerAvatarFlags(PLAYER_AVATAR_FLAG_SURFING))
+    if (surfing)
     {
         // Is BRIDGE_TYPE_POND_*?
         if (MetatileBehavior_GetBridgeType(tileBehavior) != BRIDGE_TYPE_OCEAN)
@@ -699,8 +709,9 @@ static u8 GetBattleTransitionTypeByMap(void)
 {
     u16 tileBehavior;
     s16 x, y;
+    bool8 surfing;
 
-    PlayerGetDestCoords(&x, &y);
+    GetEncounterCoords(&x, &y, &surfing);
     tileBehavior = MapGridGetMetatileBehaviorAt(x, y);
 
     if (GetFlashLevel())

@@ -69,6 +69,9 @@ void CoopP2_GetViewBounds(s16 *left, s16 *right, s16 *top, s16 *bottom);
 bool8 CoopP2_IsObjectP2(const struct ObjectEvent *objectEvent);
 u8 CoopP2_GetInteractingFacing(void);
 void CoopP2_OnPlayer1StartedSurfing(void);
+bool8 CoopP2_GetEncounterPos(s16 *x, s16 *y, bool8 *surfing);
+void CoopP2_ClearEncounterPos(void);
+bool8 Coop_TryWildEncounterAt(s16 x, s16 y); // field_control_avatar.c
 bool8 Coop_TryStartInteractionAt(s16 x, s16 y, u8 elevation, u8 direction); // field_control_avatar.c
 bool8 Coop_TrySetupDoorWarpAt(s16 x, s16 y, u8 elevation, u8 direction);
 bool8 Coop_TryStepWarpAt(s16 x, s16 y, u8 elevation, u8 direction, bool8 arrow);
