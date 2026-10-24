@@ -1,0 +1,16 @@
+# Built ROMs, saves and save states (never commit these)
+*.gba
+!pokeemerald-master/pokeemerald-master/data/*.gba
+*.sav
+*.sa2
+*.ss[0-9]
+
+# Leftovers from applying patches
+*.rej
+*.orig
+
+# Editor / OS clutter
+.vscode/
+Thumbs.db
+desktop.ini
+.DS_Store
