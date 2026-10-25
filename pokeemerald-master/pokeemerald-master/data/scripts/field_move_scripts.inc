@@ -202,6 +202,20 @@ EventScript_EndWaterfall::
 	releaseall
 	end
 
+@ Linked co-op: Player 2 climbs a waterfall (Player 1 comes along).
+EventScript_CoopP2UseWaterfall::
+	lockall
+	special CoopP2_FindWaterfallMon
+	goto_if_eq VAR_RESULT, PARTY_SIZE, EventScript_CantWaterfall
+	bufferpartymonnick STR_VAR_1, VAR_RESULT
+	setfieldeffectargument 0, VAR_RESULT
+	msgbox Text_WantToWaterfall, MSGBOX_YESNO
+	goto_if_eq VAR_RESULT, NO, EventScript_EndWaterfall
+	msgbox Text_MonUsedWaterfall, MSGBOX_DEFAULT
+	special CoopP2_StartWaterfall
+	waitstate
+	goto EventScript_EndWaterfall
+
 Text_CantWaterfall:
 	.string "A wall of water is crashing down with\n"
 	.string "a mighty roar.$"
@@ -259,6 +273,33 @@ EventScript_CantSurface::
 EventScript_EndSurface::
 	releaseall
 	end
+
+@ Linked co-op: Player 2 dives or surfaces (both players go).
+EventScript_CoopP2UseDive::
+	lockall
+	special CoopP2_FindDiveMon
+	goto_if_eq VAR_RESULT, PARTY_SIZE, EventScript_CantDive
+	bufferpartymonnick STR_VAR_1, VAR_RESULT
+	setfieldeffectargument 0, VAR_RESULT
+	msgbox Text_WantToDive, MSGBOX_YESNO
+	goto_if_eq VAR_RESULT, NO, EventScript_EndDive
+	msgbox Text_MonUsedDive, MSGBOX_DEFAULT
+	special CoopP2_StartDive
+	waitstate
+	goto EventScript_EndDive
+
+EventScript_CoopP2UseDiveUnderwater::
+	lockall
+	special CoopP2_FindDiveMon
+	goto_if_eq VAR_RESULT, PARTY_SIZE, EventScript_CantSurface
+	bufferpartymonnick STR_VAR_1, VAR_RESULT
+	setfieldeffectargument 0, VAR_RESULT
+	msgbox Text_WantToSurface, MSGBOX_YESNO
+	goto_if_eq VAR_RESULT, NO, EventScript_EndSurface
+	msgbox Text_MonUsedDive, MSGBOX_DEFAULT
+	special CoopP2_StartDive
+	waitstate
+	goto EventScript_EndSurface
 
 Text_CantDive:
 	.string "The sea is deep here. A POKéMON\n"

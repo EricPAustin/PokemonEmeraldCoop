@@ -1894,6 +1894,8 @@ static bool8 WaterfallFieldEffect_ContinueRideOrEnd(struct Task *task, struct Ob
     gPlayerAvatar.preventStep = FALSE;
     DestroyTask(FindTaskIdByFunc(Task_UseWaterfall));
     FieldEffectActiveListRemove(FLDEFF_USE_WATERFALL);
+    if (COOP_LINKED && gCoopLinkActive)
+        CoopP2_OnPlayer1UsedWaterfall(); // Linked co-op: Player 2 comes along to the top
     return FALSE;
 }
 

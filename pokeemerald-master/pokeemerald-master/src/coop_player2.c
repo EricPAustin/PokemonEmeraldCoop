@@ -4,6 +4,7 @@
 #include "event_data.h"
 #include "event_object_movement.h"
 #include "field_camera.h"
+#include "field_control_avatar.h"
 #include "field_player_avatar.h"
 #include "fieldmap.h"
 #include "metatile_behavior.h"
@@ -24,19 +25,27 @@
 #include "field_effect_helpers.h"
 #include "party_menu.h"
 #include "pokemon.h"
+#include "constants/map_types.h"
 
 // Linked co-op: Player 2's character in the overworld.
 //
 // Player 1 is the game's normal player character: it triggers doors, scripts,
 // wild encounters and trainers. Player 2 is an extra object event that walks
 // around with Player 2's buttons, within COOP_TETHER_X/Y tiles of Player 1.
-// While Player 1 bikes or dives, and right after map changes, Player 2 "rides
-// along" (hidden on Player 1's tile) and hops off next to Player 1 as soon as
+// While Player 1 bikes, and right after map changes, Player 2 "rides along"
+// (hidden on Player 1's tile) and hops off next to Player 1 as soon as
 // Player 1 is standing still.
 //
 // Surfing: either player can start surfing. Whoever starts brings the other
 // along: the other player appears on the water next to them, surfing too.
 // After that each player surfs and lands on their own.
+//
+// Waterfall: either player can climb a waterfall, and whoever climbs brings
+// the other along to the top. Either player can also surf down one; if that
+// leaves the other player too far behind, they come along to the bottom.
+//
+// Dive: either player can dive and surface, and both players go together.
+// Underwater, each player swims on their own.
 //
 // Everything here runs inside the shared simulated frame and only reads state
 // that is identical on both GBAs, so both games move Player 2 the same way.
@@ -76,8 +85,7 @@ bool8 CoopP2_IsWalking(void)
 
 static bool8 MustRideAlong(void)
 {
-    return (gPlayerAvatar.flags & (PLAYER_AVATAR_FLAG_UNDERWATER
-                                 | PLAYER_AVATAR_FLAG_MACH_BIKE | PLAYER_AVATAR_FLAG_ACRO_BIKE)) != 0;
+    return (gPlayerAvatar.flags & (PLAYER_AVATAR_FLAG_MACH_BIKE | PLAYER_AVATAR_FLAG_ACRO_BIKE)) != 0;
 }
 
 static bool8 IsWithinTether(s16 x, s16 y, s16 otherX, s16 otherY)
@@ -132,6 +140,16 @@ static bool8 IsAnyObjectAt(const struct ObjectEvent *self, s16 x, s16 y)
             return TRUE;
     }
     return FALSE;
+}
+
+// Can Player 2 be placed on this underwater tile?
+static bool8 IsGoodUnderwaterSpotForP2(const struct ObjectEvent *p2, s16 x, s16 y)
+{
+    if (MapGridGetCollisionAt(x, y) || GetMapBorderIdAt(x, y) == CONNECTION_INVALID)
+        return FALSE;
+    if (Coop_IsWarpTile(MapGridGetMetatileBehaviorAt(x, y)))
+        return FALSE;
+    return !IsAnyObjectAt(p2, x, y);
 }
 
 // Can Player 2 be placed on this tile when hopping off next to Player 1?
@@ -223,14 +241,99 @@ static void StartP2SurfState(struct ObjectEvent *p2)
         CreateSurfBlob(p2->currentCoords.x, p2->currentCoords.y, GetObjectId(p2), BOB_PLAYER_AND_MON);
 }
 
-// Instantly takes Player 2 off the water.
+// Underwater, Player 2's sprite bobs up and down (like Player 1's, see
+// StartUnderwaterSurfBlobBobbing) through this invisible helper sprite.
+#define sObjId data[0]
+#define sBobY  data[1]
+#define sTimer data[2]
+
+static void SpriteCB_P2UnderwaterBob(struct Sprite *sprite)
+{
+    struct ObjectEvent *p2 = &gObjectEvents[sprite->sObjId];
+
+    if (!p2->active)
+    {
+        DestroySprite(sprite);
+        return;
+    }
+    if (((sprite->sTimer++) & 3) == 0)
+        gSprites[p2->spriteId].y2 += sprite->sBobY;
+    if ((sprite->sTimer & 15) == 0)
+        sprite->sBobY = -sprite->sBobY;
+}
+
+static u8 FindUnderwaterBob(u8 objectEventId)
+{
+    s32 i;
+
+    for (i = 0; i < MAX_SPRITES; i++)
+    {
+        if (gSprites[i].inUse && gSprites[i].callback == SpriteCB_P2UnderwaterBob
+         && gSprites[i].sObjId == objectEventId)
+            return i;
+    }
+    return MAX_SPRITES;
+}
+
+static void CreateUnderwaterBob(u8 objectEventId)
+{
+    u8 spriteId = CreateSpriteAtEnd(&gDummySpriteTemplate, 0, 0, -1);
+
+    if (spriteId == MAX_SPRITES)
+        return;
+    gSprites[spriteId].callback = SpriteCB_P2UnderwaterBob;
+    gSprites[spriteId].invisible = TRUE;
+    gSprites[spriteId].sObjId = objectEventId;
+    gSprites[spriteId].sBobY = 1;
+}
+
+#undef sObjId
+#undef sBobY
+#undef sTimer
+
+static bool8 IsUnderwaterMap(void)
+{
+    return gMapHeader.mapType == MAP_TYPE_UNDERWATER;
+}
+
+static bool8 IsP2Underwater(const struct ObjectEvent *p2)
+{
+    return p2->graphicsId == GetP2GraphicsId(PLAYER_AVATAR_STATE_UNDERWATER);
+}
+
+// Instantly puts Player 2 underwater (sprite and bobbing).
+static void StartP2UnderwaterState(struct ObjectEvent *p2)
+{
+    if (!IsP2Underwater(p2))
+    {
+        ObjectEventSetGraphicsId(p2, GetP2GraphicsId(PLAYER_AVATAR_STATE_UNDERWATER));
+        ObjectEventTurn(p2, p2->facingDirection);
+        gSprites[p2->spriteId].y2 = 0;
+    }
+    if (FindUnderwaterBob(GetObjectId(p2)) == MAX_SPRITES)
+        CreateUnderwaterBob(GetObjectId(p2));
+}
+
+// Surfing on the surface, swimming on an underwater map.
+static void StartP2WaterState(struct ObjectEvent *p2)
+{
+    if (IsUnderwaterMap())
+        StartP2UnderwaterState(p2);
+    else
+        StartP2SurfState(p2);
+}
+
+// Instantly takes Player 2 off the water (or out of it).
 static void StopP2SurfState(struct ObjectEvent *p2)
 {
     u8 blobId = FindSurfBlob(GetObjectId(p2));
 
     if (blobId != MAX_SPRITES)
         DestroySprite(&gSprites[blobId]);
-    if (IsP2Surfing(p2))
+    blobId = FindUnderwaterBob(GetObjectId(p2));
+    if (blobId != MAX_SPRITES)
+        DestroySprite(&gSprites[blobId]);
+    if (IsP2Surfing(p2) || IsP2Underwater(p2))
     {
         ObjectEventSetGraphicsId(p2, GetP2GraphicsId(PLAYER_AVATAR_STATE_NORMAL));
         ObjectEventTurn(p2, p2->facingDirection);
@@ -288,14 +391,15 @@ static void PlaceP2At(struct ObjectEvent *p2, s16 x, s16 y, u8 facing, bool8 sur
     ObjectEventUpdateElevation(p2);
     p2->invisible = FALSE;
     if (surfing)
-        StartP2SurfState(p2);
+        StartP2WaterState(p2);
     else
         StopP2SurfState(p2);
     ObjectEventTurn(p2, facing);
 }
 
-// Player 2 started surfing while Player 1 is on land: Player 1 appears on the
-// water next to Player 2, surfing too. The camera jumps with Player 1.
+// Player 1 appears on the water next to Player 2, surfing too (Player 2 started
+// surfing while Player 1 was on land, or climbed or surfed down a waterfall).
+// The camera jumps with Player 1.
 static bool8 TryTeleportP1ToSurfNextTo(const struct ObjectEvent *p2)
 {
     struct ObjectEvent *p1 = GetPlayer1();
@@ -310,6 +414,12 @@ static bool8 TryTeleportP1ToSurfNextTo(const struct ObjectEvent *p2)
     MoveCameraAndRedrawMap(x - p1->currentCoords.x, y - p1->currentCoords.y);
     MoveObjectEventToMapCoords(p1, x, y); // Also resets the camera object
     ObjectEventUpdateElevation(p1);
+    if (gPlayerAvatar.flags & PLAYER_AVATAR_FLAG_SURFING)
+    {
+        // Already surfing: the surf blob follows Player 1 by itself.
+        ObjectEventTurn(p1, p2->facingDirection);
+        return TRUE;
+    }
     ObjectEventSetGraphicsId(p1, GetPlayerAvatarGraphicsIdByStateId(PLAYER_AVATAR_STATE_SURFING));
     ObjectEventTurn(p1, p2->facingDirection);
     SetPlayerAvatarStateMask(PLAYER_AVATAR_FLAG_SURFING);
@@ -333,9 +443,23 @@ void CoopP2_OnPlayer1StartedSurfing(void)
         PlaceP2At(p2, x, y, p1->facingDirection, TRUE);
 }
 
-// Index of the party Pokémon that uses Surf for Player 2 (Player 2's own first),
-// or PARTY_SIZE.
-static u8 FindP2SurfMon(void)
+// Player 1 just climbed a waterfall (vanilla Waterfall field effect finished):
+// if Player 2 is surfing below, Player 2 comes along to the top.
+void CoopP2_OnPlayer1UsedWaterfall(void)
+{
+    struct ObjectEvent *p1 = GetPlayer1();
+    struct ObjectEvent *p2 = CoopP2_GetObject();
+    s16 x, y;
+
+    if (p2 == NULL || p2->invisible || !IsP2Surfing(p2) || p2->currentCoords.y <= p1->currentCoords.y)
+        return;
+    if (FindSurfSpotNear(p2, p1->currentCoords.x, p1->currentCoords.y, p1->facingDirection, FALSE, &x, &y))
+        PlaceP2At(p2, x, y, p1->facingDirection, TRUE);
+}
+
+// Index of the party Pokémon that uses a field move for Player 2 (Player 2's
+// own first), or PARTY_SIZE.
+static u8 FindP2MonWithMove(u16 move)
 {
     s32 pass, i;
 
@@ -348,16 +472,31 @@ static u8 FindP2SurfMon(void)
                 continue;
             if ((pass == 0) != (GetMonCoopOwner(mon) == COOP_PLAYER_2))
                 continue;
-            if (MonKnowsMove(mon, MOVE_SURF))
+            if (MonKnowsMove(mon, move))
                 return i;
         }
     }
     return PARTY_SIZE;
 }
 
+static u8 FindP2SurfMon(void)
+{
+    return FindP2MonWithMove(MOVE_SURF);
+}
+
 void CoopP2_FindSurfMon(void)
 {
     gSpecialVar_Result = FindP2SurfMon();
+}
+
+void CoopP2_FindWaterfallMon(void)
+{
+    gSpecialVar_Result = FindP2MonWithMove(MOVE_WATERFALL);
+}
+
+void CoopP2_FindDiveMon(void)
+{
+    gSpecialVar_Result = FindP2MonWithMove(MOVE_DIVE);
 }
 
 // Player 2 pressed A facing (x, y): can they surf onto it?
@@ -437,8 +576,145 @@ void CoopP2_StartSurfing(void)
     gTasks[taskId].tMonId = gFieldEffectArguments[0];
 }
 
+// Player 2 uses Waterfall (special from EventScript_CoopP2UseWaterfall, followed
+// by waitstate): rides up while on waterfall tiles, then Player 1 comes along
+// unless Player 1 is already above the waterfall.
+#define tStartY data[2]
+
+static void Task_CoopP2Waterfall(u8 taskId)
+{
+    struct Task *task = &gTasks[taskId];
+    struct ObjectEvent *p2 = CoopP2_GetObject();
+
+    if (p2 == NULL)
+    {
+        ScriptContext_Enable();
+        DestroyTask(taskId);
+        return;
+    }
+
+    switch (task->tState)
+    {
+    case 0:
+        task->tStartY = p2->currentCoords.y;
+        gFieldEffectArguments[0] = task->tMonId | SHOW_MON_CRY_NO_DUCKING;
+        FieldEffectStart(FLDEFF_FIELD_MOVE_SHOW_MON_INIT);
+        task->tState++;
+        break;
+    case 1:
+        if (!FieldEffectActiveListContains(FLDEFF_FIELD_MOVE_SHOW_MON))
+        {
+            UnfreezeObjectEvent(p2);
+            ObjectEventClearHeldMovementIfActive(p2);
+            task->tState++;
+        }
+        break;
+    case 2:
+        ObjectEventSetHeldMovement(p2, GetWalkSlowMovementAction(DIR_NORTH));
+        task->tState++;
+        break;
+    case 3:
+        if (ObjectEventClearHeldMovementIfFinished(p2))
+        {
+            if (MetatileBehavior_IsWaterfall(p2->currentMetatileBehavior))
+            {
+                task->tState = 2; // Still climbing
+                break;
+            }
+            if (GetPlayer1()->currentCoords.y >= task->tStartY)
+                TryTeleportP1ToSurfNextTo(p2);
+            ScriptContext_Enable();
+            DestroyTask(taskId);
+        }
+        break;
+    }
+}
+
+void CoopP2_StartWaterfall(void)
+{
+    u8 taskId = CreateTask(Task_CoopP2Waterfall, 0xFF);
+    gTasks[taskId].tMonId = gFieldEffectArguments[0];
+}
+
+#undef tStartY
+
+// Player 2 uses Dive, down or up (special from EventScript_CoopP2UseDive or
+// EventScript_CoopP2UseDiveUnderwater, followed by waitstate). Both players
+// warp to Player 2's spot on the other map; Player 2 arrives with Player 1.
+static void Task_CoopP2Dive(u8 taskId)
+{
+    struct Task *task = &gTasks[taskId];
+    struct ObjectEvent *p2 = CoopP2_GetObject();
+    struct MapPosition position;
+
+    switch (task->tState)
+    {
+    case 0:
+        gFieldEffectArguments[0] = task->tMonId | SHOW_MON_CRY_NO_DUCKING;
+        FieldEffectStart(FLDEFF_FIELD_MOVE_SHOW_MON_INIT);
+        task->tState++;
+        break;
+    case 1:
+        if (!FieldEffectActiveListContains(FLDEFF_FIELD_MOVE_SHOW_MON))
+        {
+            if (p2 != NULL)
+            {
+                position.x = p2->currentCoords.x;
+                position.y = p2->currentCoords.y;
+                position.elevation = p2->currentElevation;
+                TryDoDiveWarp(&position, MapGridGetMetatileBehaviorAt(position.x, position.y));
+            }
+            ScriptContext_Enable();
+            DestroyTask(taskId);
+        }
+        break;
+    }
+}
+
+void CoopP2_StartDive(void)
+{
+    u8 taskId = CreateTask(Task_CoopP2Dive, 0xFF);
+    gTasks[taskId].tMonId = gFieldEffectArguments[0];
+}
+
 #undef tState
 #undef tMonId
+
+// Player 2 pressed A facing a waterfall while surfing.
+static const u8 *GetP2WaterfallScript(const struct ObjectEvent *p2, s16 x, s16 y, u8 dir)
+{
+    if (!IsP2Surfing(p2) || !MetatileBehavior_IsWaterfall(MapGridGetMetatileBehaviorAt(x, y)))
+        return NULL;
+    if (!FlagGet(FLAG_BADGE08_GET) || dir != DIR_NORTH)
+        return EventScript_CannotUseWaterfall;
+    return EventScript_CoopP2UseWaterfall;
+}
+
+// Player 2 pressed A while surfing on deep water.
+static bool8 CanP2Dive(const struct ObjectEvent *p2)
+{
+    s16 x = p2->currentCoords.x;
+    s16 y = p2->currentCoords.y;
+
+    if (!IsP2Surfing(p2) || !FlagGet(FLAG_BADGE07_GET) || IsUnderwaterMap())
+        return FALSE;
+    if (!MetatileBehavior_IsDiveable(MapGridGetMetatileBehaviorAt(x, y)))
+        return FALSE;
+    return SetDiveWarpDive(x - MAP_OFFSET, y - MAP_OFFSET);
+}
+
+// Player 2 pressed B underwater.
+static bool8 CanP2Surface(const struct ObjectEvent *p2)
+{
+    s16 x = p2->currentCoords.x;
+    s16 y = p2->currentCoords.y;
+
+    if (!IsP2Underwater(p2) || !FlagGet(FLAG_BADGE07_GET) || !IsUnderwaterMap())
+        return FALSE;
+    if (MetatileBehavior_IsUnableToEmerge(MapGridGetMetatileBehaviorAt(x, y)))
+        return FALSE;
+    return SetDiveWarpEmerge(x - MAP_OFFSET, y - MAP_OFFSET);
+}
 
 // ---------------------------------------------------------------------------
 
@@ -493,7 +769,16 @@ static void PlaceP2NearP1(struct ObjectEvent *p2)
         s16 x = p1->currentCoords.x;
         s16 y = p1->currentCoords.y;
         MoveCoords(dirs[i], &x, &y);
-        if (IsGoodSpotForP2(p2, x, y, p1->currentElevation))
+        if (gPlayerAvatar.flags & PLAYER_AVATAR_FLAG_UNDERWATER)
+        {
+            // Underwater: swim alongside.
+            if (IsGoodUnderwaterSpotForP2(p2, x, y))
+            {
+                PlaceP2At(p2, x, y, facing, TRUE);
+                return;
+            }
+        }
+        else if (IsGoodSpotForP2(p2, x, y, p1->currentElevation))
         {
             PlaceP2At(p2, x, y, facing, FALSE);
             return;
@@ -555,6 +840,7 @@ static void SpawnObjectsAroundP2(void)
 static bool8 sP2Interacting; // The running script was started by Player 2
 static bool8 sP2Stepped;     // Player 2's current movement is a step (check for warps when it ends)
 static bool8 sP2EncounterStep; // Player 2's current movement is a step (check for wild Pokémon when it ends)
+static bool8 sP2Descending;  // Player 2 is surfing down a waterfall
 
 // Where the wild Pokémon was found, when Player 2 found it (for the battle
 // background and transition). Cleared when the battle starts.
@@ -665,13 +951,51 @@ static bool8 TryP2Interaction(struct ObjectEvent *p2)
     MoveCoords(dir, &x, &y);
     if (!Coop_TryStartInteractionAt(x, y, p2->currentElevation, dir))
     {
-        if (!CanP2StartSurfing(p2, x, y, dir))
+        const u8 *script = GetP2WaterfallScript(p2, x, y, dir);
+
+        if (script != NULL)
+            ScriptContext_SetupScript(script);
+        else if (CanP2StartSurfing(p2, x, y, dir))
+            ScriptContext_SetupScript(EventScript_CoopP2UseSurf);
+        else if (CanP2Dive(p2))
+            ScriptContext_SetupScript(EventScript_CoopP2UseDive);
+        else
             return FALSE;
-        ScriptContext_SetupScript(EventScript_CoopP2UseSurf);
     }
     sP2Interacting = TRUE;
     gCoopInputOwner = COOP_PLAYER_2; // Player 2 answers this conversation
     return TRUE;
+}
+
+// Player 2 pressed B underwater: surface (both players go up).
+static bool8 TryP2Surface(struct ObjectEvent *p2)
+{
+    if (!CanP2Surface(p2))
+        return FALSE;
+    ScriptContext_SetupScript(EventScript_CoopP2UseDiveUnderwater);
+    sP2Interacting = TRUE;
+    gCoopInputOwner = COOP_PLAYER_2;
+    return TRUE;
+}
+
+static void TryStartP2UnderwaterStep(struct ObjectEvent *p2, u8 dir)
+{
+    struct ObjectEvent *p1 = GetPlayer1();
+    s16 x = p2->currentCoords.x;
+    s16 y = p2->currentCoords.y;
+
+    MoveCoords(dir, &x, &y);
+    if (IsWithinTether(x, y, p1->currentCoords.x, p1->currentCoords.y)
+     && GetCollisionAtCoords(p2, x, y, dir) == COLLISION_NONE)
+    {
+        ObjectEventSetHeldMovement(p2, GetWalkNormalMovementAction(dir));
+        sP2Stepped = TRUE;
+        sP2EncounterStep = TRUE;
+        SpawnObjectsAroundP2();
+        return;
+    }
+    if (p2->facingDirection != dir)
+        ObjectEventSetHeldMovement(p2, GetFaceDirectionMovementAction(dir));
 }
 
 static void TryStartP2SurfStep(struct ObjectEvent *p2, u8 dir)
@@ -682,6 +1006,15 @@ static void TryStartP2SurfStep(struct ObjectEvent *p2, u8 dir)
     u8 collision;
 
     MoveCoords(dir, &x, &y);
+    // Surfing down a waterfall (Player 1 comes along if left too far behind).
+    if (dir == DIR_SOUTH && MetatileBehavior_IsWaterfall(MapGridGetMetatileBehaviorAt(x, y))
+     && GetCollisionAtCoords(p2, x, y, dir) == COLLISION_NONE)
+    {
+        ObjectEventSetHeldMovement(p2, GetWalkFastMovementAction(dir));
+        sP2Descending = TRUE;
+        SpawnObjectsAroundP2();
+        return;
+    }
     if (IsWithinTether(x, y, p1->currentCoords.x, p1->currentCoords.y))
     {
         collision = GetCollisionAtCoords(p2, x, y, dir);
@@ -723,6 +1056,11 @@ static void TryStartP2Step(struct ObjectEvent *p2)
     if (IsP2Surfing(p2))
     {
         TryStartP2SurfStep(p2, dir);
+        return;
+    }
+    if (IsP2Underwater(p2))
+    {
+        TryStartP2UnderwaterStep(p2, dir);
         return;
     }
 
@@ -793,13 +1131,15 @@ void CoopP2_Update(void)
         return;
     }
 
-    if (FuncIsActiveTask(Task_CoopP2DoorWarp) || FuncIsActiveTask(Task_CoopP2Surf))
-        return; // Walking through a door, jumping onto the water
+    if (FuncIsActiveTask(Task_CoopP2DoorWarp) || FuncIsActiveTask(Task_CoopP2Surf)
+     || FuncIsActiveTask(Task_CoopP2Waterfall) || FuncIsActiveTask(Task_CoopP2Dive))
+        return; // Walking through a door, jumping onto the water, climbing a waterfall, diving
 
     if (MustRideAlong())
     {
         sP2Stepped = FALSE;
         sP2EncounterStep = FALSE;
+        sP2Descending = FALSE;
         RideAlong(p2);
         return;
     }
@@ -808,6 +1148,7 @@ void CoopP2_Update(void)
     {
         sP2Stepped = FALSE;
         sP2EncounterStep = FALSE;
+        sP2Descending = FALSE;
         // Riding along: hop off once Player 1 stands still with free controls.
         if (!ArePlayerFieldControlsLocked() && gPlayerAvatar.tileTransitionState == T_NOT_MOVING)
             PlaceP2NearP1(p2);
@@ -820,14 +1161,42 @@ void CoopP2_Update(void)
     if (ObjectEventIsHeldMovementActive(p2) && !ObjectEventClearHeldMovementIfFinished(p2))
         return;
 
+    // Surfing down a waterfall: keep going until the bottom, then bring
+    // Player 1 along if they're too far away now.
+    if (IsP2Surfing(p2) && MetatileBehavior_IsWaterfall(MapGridGetMetatileBehaviorAt(p2->currentCoords.x, p2->currentCoords.y)))
+        sP2Descending = TRUE;
+    if (sP2Descending)
+    {
+        if (IsP2Surfing(p2) && MetatileBehavior_IsWaterfall(MapGridGetMetatileBehaviorAt(p2->currentCoords.x, p2->currentCoords.y)))
+        {
+            ObjectEventSetHeldMovement(p2, GetWalkFastMovementAction(DIR_SOUTH));
+            SpawnObjectsAroundP2();
+            return;
+        }
+        if (!IsWithinTether(p2->currentCoords.x, p2->currentCoords.y, p1->currentCoords.x, p1->currentCoords.y))
+        {
+            // Wait for Player 1 to stand still first.
+            if (gPlayerAvatar.tileTransitionState != T_NOT_MOVING || gFieldCamera.x != 0 || gFieldCamera.y != 0
+             || ArePlayerFieldControlsLocked())
+                return;
+            TryTeleportP1ToSurfNextTo(p2);
+        }
+        sP2Descending = FALSE;
+    }
+
     // Surfing follows the tile Player 2 is on: hopping off onto land ends it,
-    // and the surf blob comes back after battles and menus.
+    // and the surf blob comes back after battles and menus. The same goes for
+    // swimming underwater.
     if (IsP2Surfing(p2))
     {
         if (!IsSurfableAt(p2->currentCoords.x, p2->currentCoords.y))
             StopP2SurfState(p2);
         else
             StartP2SurfState(p2);
+    }
+    else if (IsP2Underwater(p2))
+    {
+        StartP2UnderwaterState(p2);
     }
 
     // Player 1 got moved too far away (cutscene, forced movement...): catch up.
@@ -860,6 +1229,8 @@ void CoopP2_Update(void)
     }
 
     sP2Interacting = FALSE;
+    if ((CoopLink_GetPlayerNewKeys(COOP_PLAYER_2) & B_BUTTON) && TryP2Surface(p2))
+        return;
     if ((CoopLink_GetPlayerNewKeys(COOP_PLAYER_2) & A_BUTTON) && TryP2Interaction(p2))
         return;
     TryStartP2Step(p2);
