@@ -2022,11 +2022,11 @@ void BufferStringBattle(u16 stringID)
         }
         else
         {
-            if (gBattleTypeFlags & BATTLE_TYPE_LEGENDARY)
+            if (gBattleTypeFlags & BATTLE_TYPE_DOUBLE // interesting, looks like they had something planned for wild double battles
+             && !Coop_IsBattlerAbsent(GetBattlerAtPosition(B_POSITION_OPPONENT_RIGHT)))
+                stringPtr = sText_TwoWildPkmnAppeared; // Co-op: legendaries come in pairs too
+            else if (gBattleTypeFlags & BATTLE_TYPE_LEGENDARY)
                 stringPtr = sText_LegendaryPkmnAppeared;
-            else if (gBattleTypeFlags & BATTLE_TYPE_DOUBLE // interesting, looks like they had something planned for wild double battles
-                  && !Coop_IsBattlerAbsent(GetBattlerAtPosition(B_POSITION_OPPONENT_RIGHT)))
-                stringPtr = sText_TwoWildPkmnAppeared;
             else if (gBattleTypeFlags & BATTLE_TYPE_WALLY_TUTORIAL)
                 stringPtr = sText_WildPkmnAppearedPause;
             else

@@ -5262,6 +5262,10 @@ static void ReturnFromBattleToOverworld(void)
             gBattleOutcome == B_OUTCOME_DREW)
 #endif
             SetRoamerInactive();
+        // Co-op: the roamer can faint while its copy keeps fighting and then flees.
+        // It was still defeated, so it stops roaming as if the battle had been won.
+        else if (gCoopBattle && GetMonData(&gEnemyParty[0], MON_DATA_HP, NULL) == 0)
+            SetRoamerInactive();
     }
 
     m4aSongNumStop(SE_LOW_HEALTH);

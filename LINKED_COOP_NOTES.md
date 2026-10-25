@@ -61,7 +61,12 @@ In linked co-op, Player 2's buttons pick Player 2's starter.
   many as one player normally would.
 - Wild battles are double battles: two wild Pokémon, each rolled separately from the same list
   (grass, water, Rock Smash or the same fishing rod), so they're usually different but can be the
-  same species. Each can hold an item. Roamers, legendaries and scripted encounters stay one-on-one.
+  same species. Each can hold an item.
+- **Legendaries, roamers and scripted wild Pokémon** (Kyogre, Groudon, Rayquaza, the Regis, Latias/Latios,
+  Mew, Deoxys, Lugia, Ho-Oh, Sudowoodo, Kecleon, the Aqua Hideout Electrode...) come as a pair too: a second
+  copy of the same Pokémon (same level, moves and held item, its own IVs and nature). Catching either one ends
+  the battle, so you still get only one. If a roamer faints and its copy then flees, the roamer counts as
+  defeated and stops roaming, like in the original game.
 - A Poké Ball goes to the wild Pokémon across from the thrower (or the other one if that spot is
   empty). Catching one ends the battle, like in the original game.
 - The battle background matches where the Pokémon was found (water if Player 2 found it while surfing).

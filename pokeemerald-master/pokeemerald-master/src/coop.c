@@ -522,6 +522,7 @@ bool8 Coop_IsMirrorBattle(void)
 }
 
 static void InitCoopBattle(void);
+static void AddMirrorWildMon(void);
 
 // Called from CB2_InitBattleInternal once the enemy party has been created.
 void Coop_InitBattle(void)
@@ -564,9 +565,39 @@ static void InitCoopBattle(void)
         return;
     }
 
-    // Wild Pokémon come in pairs (not roamers, legendaries or scripted battles).
+    // Wild Pokémon come in pairs. Roamers, legendaries and scripted wild battles
+    // have no table to roll from, so they bring a copy of themselves.
     if (!(gBattleTypeFlags & BATTLE_TYPE_TRAINER))
+    {
         Coop_AddSecondWildMon();
+        if (GetMonData(&gEnemyParty[1], MON_DATA_SPECIES, NULL) == SPECIES_NONE)
+            AddMirrorWildMon();
+    }
+}
+
+// A second Pokémon of the same species, level, moves and held item, with its own
+// random IVs and nature. Catching either one ends the battle, so only one can be caught.
+static void AddMirrorWildMon(void)
+{
+    u16 species = GetMonData(&gEnemyParty[0], MON_DATA_SPECIES, NULL);
+    u16 heldItem = GetMonData(&gEnemyParty[0], MON_DATA_HELD_ITEM, NULL);
+    u8 level = GetMonData(&gEnemyParty[0], MON_DATA_LEVEL, NULL);
+    u16 move;
+    u8 pp;
+    s32 i;
+
+    if (species == SPECIES_NONE || species == SPECIES_EGG)
+        return;
+
+    CreateMon(&gEnemyParty[1], species, level, USE_RANDOM_IVS, FALSE, 0, OT_ID_PLAYER_ID, 0);
+    SetMonData(&gEnemyParty[1], MON_DATA_HELD_ITEM, &heldItem);
+    for (i = 0; i < MAX_MON_MOVES; i++)
+    {
+        move = GetMonData(&gEnemyParty[0], MON_DATA_MOVE1 + i, NULL);
+        pp = GetMonData(&gEnemyParty[0], MON_DATA_PP1 + i, NULL);
+        SetMonData(&gEnemyParty[1], MON_DATA_MOVE1 + i, &move);
+        SetMonData(&gEnemyParty[1], MON_DATA_PP1 + i, &pp);
+    }
 }
 
 bool8 IsCoopBattle(void)
