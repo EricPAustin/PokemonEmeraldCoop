@@ -581,6 +581,9 @@ static u32 GetOpponentMonData(u8 monId, u8 *dst)
     switch (gBattleBufferA[gActiveBattler][1])
     {
     case REQUEST_ALL_BATTLE:
+        // Co-op: no leftover stack bytes (padding, after the nickname), which
+        // differ between the linked GBAs and would end up in gBattleMons.
+        CpuFill16(0, &battleMon, sizeof(battleMon));
         battleMon.species = GetMonData(&gEnemyParty[monId], MON_DATA_SPECIES);
         battleMon.item = GetMonData(&gEnemyParty[monId], MON_DATA_HELD_ITEM);
         for (size = 0; size < MAX_MON_MOVES; size++)
