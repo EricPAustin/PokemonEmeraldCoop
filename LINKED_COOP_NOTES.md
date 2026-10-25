@@ -41,9 +41,8 @@ Teams, the 3-Pokémon limit and co-op double battles work as in milestone 1.
 ### Starters
 When Professor Birch's bag opens, Player 1 picks a starter, then the bag opens again for Player 2
 ("Player 2, choose your POKéMON and help out too!"). Each player can pick any of the three, even the
-same one. Player 1's starter fights the Zigzagoon alone (that first battle is scripted as a single
-battle); co-op double battles start from the next battle. In linked co-op, Player 2's buttons pick
-Player 2's starter.
+same one. The first battle is already a co-op double: the two starters against two wild Zigzagoon.
+In linked co-op, Player 2's buttons pick Player 2's starter.
 
 
 ### Surfing together
@@ -86,6 +85,17 @@ Youngster, Roxanne brings another Gym Leader, Sidney another Elite Four member).
   The Champion brings himself with the rest of his team (Wallace & Wallace).
 - Beating the partner doesn't count as beating them where they really are, so you can still fight them there.
 - If only one player has a Pokémon that can fight, battles are the original singles with no partner.
+
+### Scripted battles
+Story battles (rival, gym leaders, Team Aqua/Magma, Wally, Elite Four, Champion) go through the same
+code as any other trainer battle, so they're co-op doubles with a mirrored partner like the rest.
+The two that used to stay singles are now co-op too:
+- **Birch's Zigzagoon:** the very first battle is two Zigzagoon (level 2) against both starters.
+- **Steven's tag battle (Mossdeep Space Center):** Player 2 takes Steven's place. Both players fight
+  Maxie and Tabitha with their own teams (no picking 3 Pokémon first). Steven only fights alongside
+  you if one player has no Pokémon that can battle.
+Still single: Wally's catching tutorial (Wally battles, not you). Legendaries and other one-off wild
+Pokémon are 2 players against 1.
 
 ### Changing teams at the PC (goal 3)
 Every PC now has a **CO-OP TEAMS** option. Pick a Pokémon to send it to the other player's team.
