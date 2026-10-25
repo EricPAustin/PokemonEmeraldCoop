@@ -547,4 +547,8 @@ gSpecials::
 	def_special Coop_GiveInputToPlayer1
 	def_special CoopP2_FindSurfMon
 	def_special CoopP2_StartSurfing
+	def_special CoopP2_FindWaterfallMon
+	def_special CoopP2_StartWaterfall
+	def_special CoopP2_FindDiveMon
+	def_special CoopP2_StartDive
 	def_special Coop_CanBothTeamsFight

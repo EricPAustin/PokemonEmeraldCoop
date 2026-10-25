@@ -24,7 +24,9 @@ battles, same saves.
 - **Surfing together:** either player can start surfing. Whoever starts brings the other along:
   the other player appears on the water right next to them, surfing too. After that each player
   surfs and lands on their own (still within the tether).
-- While P1 bikes or dives, P2 rides along (hidden on P1's tile) and hops off next to P1
+- **Waterfall and Dive together:** either player can climb a waterfall, surf down one, dive and
+  surface. Whoever does it brings the other along (see below).
+- While P1 bikes, P2 rides along (hidden on P1's tile) and hops off next to P1
   once P1 is standing still again.
 
 ### Who controls what
@@ -54,6 +56,20 @@ In linked co-op, Player 2's buttons pick Player 2's starter.
 - Both need the 5th badge (Balance Badge), as usual.
 - P2 surfs at running speed, like P1, and hops off onto land by walking into the shore.
 - Battles, menus and saving don't knock P2 off the water.
+
+### Waterfall and Dive together
+- **Climbing a waterfall:** either player faces a waterfall while surfing and presses A. Whoever
+  presses A answers "Would you like to use WATERFALL?" (P2's own Pokémon with Waterfall is used
+  first, otherwise any party Pokémon with it). At the top, the other player (and their screen) appears
+  on the water next to them, unless they were already above the waterfall.
+- **Surfing down a waterfall:** either player just surfs into it from the top. If that leaves the
+  other player more than the tether away, the other player comes along to the bottom.
+- **Diving:** either player presses A while surfing on deep water and answers "Would you like to use
+  DIVE?". Both players go underwater, where the diver landed; the other player appears next to them.
+- **Underwater:** each player swims on their own (still within the tether). Either player's steps in
+  seaweed can find wild Pokémon, as double battles.
+- **Surfacing:** either player presses B underwater, where light filters down from above. Both come up.
+- Both need the usual badges: the 7th (Mind Badge) for Dive, the 8th (Rain Badge) for Waterfall.
 
 ### Wild Pokémon: both players, two at a time
 - Either player's steps in grass, caves or water can start a wild battle. While Player 2 is walking
@@ -133,11 +149,17 @@ copy `.sav` over `.sa2` once; after that they stay identical.
 ## Not available during co-op
 - The Cable Club, Wireless Club, Union Room, record mixing, link contests and link battles
   (the attendants just say "please visit again"). The link cable is busy with co-op.
-- Player 2 can't use Waterfall or Dive (Player 1 does those; P2 follows).
 - Player 2 can only use doors on the map Player 1 is on (not doors just across a route border).
 - Fast-forwarding one window doesn't help: each game waits for the other.
 
 ## Testing done
+- Waterfall and Dive (two-GBA harness, surf test save with badges 7 and 8 set and Waterfall + Dive
+  taught to P2's Marill): on Route 119, P2 climbed the waterfall and P1 came along to the top; P2 surfed
+  down while P1 was far upstream and P1 came along to the bottom; P1 climbed and P2 came along; P1
+  surfed down and P2 caught up. On Route 124, P2 dove and both arrived underwater, P2 swam on their own,
+  P2 surfaced with B and both came up; then P1 dove and surfaced with P2 swimming alongside. P2 found
+  a wild Chinchou + Clamperl in seaweed underwater; after running, P2 was back underwater. Random
+  walks on the water and underwater. No desync in any run.
 Two linked mGBA cores, scripted inputs, comparing both games' state every 32 frames:
 - Walking in and out of a Pokémon Center, across the Route 102 → Oldale connection, onto Route 103.
 - A trainer battle (Calvin): each player only controls their own Pokémon's choices; either can advance text.
