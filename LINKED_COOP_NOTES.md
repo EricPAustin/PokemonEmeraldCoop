@@ -54,6 +54,15 @@ Youngster, Roxanne brings another Gym Leader, Sidney another Elite Four member).
   keeps their 3 strongest (their ace always stays). The partner brings the same number.
 - **The partner's Pokémon** are different species at the same levels: first from the partner's own
   team, then from other trainers of that class. The partner never repeats a species already in the battle.
+- **Evolution stage fits the level:** each partner Pokémon is moved to the stage a Pokémon of that level
+  could have, so early fights never get fully evolved Pokémon (the Route 103 rival's partner used to bring
+  a level 5 Gardevoir from Wally's team; now it's a Ralts). It goes down a stage while the level is below
+  the evolution level, and up while it's at or above it. Evolutions without a set level count from:
+  stones 25, friendship 30, Feebas/Milotic 30, trades 32 (close to the earliest such Pokémon trainers
+  use in the original game); they're only added going up 10 levels later than that. Baby Pokémon
+  (Pichu, Azurill...) are never used. The trainer's own team is unchanged.
+  `mirror_audit.py` (in the project files, `tools/coop-link-harness/`) lists every trainer's partner from `pokeemerald.elf`
+  and flags any that are too evolved (before this fix: 188 of 1,634 partner Pokémon; now 0).
 - The partner is always the same for a given trainer, and is chosen the same way on both GBAs.
 - Classes with only one person: Archie brings an Aqua Admin, Maxie and Tabitha bring Magma members.
   The Champion brings himself with the rest of his team (Wallace & Wallace).

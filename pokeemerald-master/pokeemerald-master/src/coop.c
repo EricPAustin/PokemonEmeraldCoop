@@ -395,6 +395,142 @@ static u16 PickMirrorTrainer(u16 trainerA)
     return (trainerB == TRAINER_NONE) ? trainerA : trainerB;
 }
 
+// ---------------------------------------------------------------------------
+// Evolution stage that fits a level
+//
+// The partner's species come from other trainers, who may use them at much
+// higher levels (Wally's Gardevoir in a level 5 rival battle). Each picked
+// species is moved to the evolution stage a Pokémon of that level could have:
+// down while it's too high, up while it's high enough to have evolved.
+// ---------------------------------------------------------------------------
+
+extern const struct Evolution gEvolutionTable[][EVOS_PER_MON];
+
+// Baby Pokémon only hatch from Eggs; trainers' Pokémon never go back to them.
+static const u16 sBabySpecies[] =
+{
+    SPECIES_PICHU, SPECIES_CLEFFA, SPECIES_IGGLYBUFF, SPECIES_SMOOCHUM, SPECIES_TYROGUE,
+    SPECIES_ELEKID, SPECIES_MAGBY, SPECIES_AZURILL, SPECIES_WYNAUT,
+};
+
+// Levels from which a trainer's Pokémon could have evolved without leveling
+// to a set level (close to the earliest such Pokémon in the original game).
+#define EVO_MIN_LEVEL_FRIENDSHIP 30
+#define EVO_MIN_LEVEL_ITEM       25
+#define EVO_MIN_LEVEL_TRADE      32
+#define EVO_MIN_LEVEL_BEAUTY     30
+// These evolutions are only added this many levels later, so the partner
+// doesn't get e.g. a Crobat as soon as a Golbat could have become one.
+#define EVO_UP_EXTRA_LEVELS      10
+
+static bool8 IsBabySpecies(u16 species)
+{
+    u8 i;
+
+    for (i = 0; i < ARRAY_COUNT(sBabySpecies); i++)
+    {
+        if (sBabySpecies[i] == species)
+            return TRUE;
+    }
+    return FALSE;
+}
+
+static bool8 IsLevelEvolution(u16 method)
+{
+    switch (method)
+    {
+    case EVO_LEVEL:
+    case EVO_LEVEL_ATK_GT_DEF:
+    case EVO_LEVEL_ATK_EQ_DEF:
+    case EVO_LEVEL_ATK_LT_DEF:
+    case EVO_LEVEL_SILCOON:
+    case EVO_LEVEL_CASCOON:
+    case EVO_LEVEL_NINJASK:
+    case EVO_LEVEL_SHEDINJA:
+        return TRUE;
+    }
+    return FALSE;
+}
+
+// The lowest level a trainer's Pokémon could have evolved this way at.
+static u8 GetMinEvolutionLevel(const struct Evolution *evo)
+{
+    switch (evo->method)
+    {
+    case EVO_FRIENDSHIP:
+    case EVO_FRIENDSHIP_DAY:
+    case EVO_FRIENDSHIP_NIGHT:
+        return EVO_MIN_LEVEL_FRIENDSHIP;
+    case EVO_ITEM:
+        return EVO_MIN_LEVEL_ITEM;
+    case EVO_BEAUTY:
+        return EVO_MIN_LEVEL_BEAUTY;
+    case EVO_TRADE:
+    case EVO_TRADE_ITEM:
+        return EVO_MIN_LEVEL_TRADE;
+    default:
+        return evo->param;
+    }
+}
+
+// Finds what species evolves into this one (SPECIES_NONE if nothing does).
+static u16 GetPreEvolution(u16 species, u8 *minLevel)
+{
+    u16 i;
+    u8 j;
+
+    for (i = 1; i < NUM_SPECIES; i++)
+    {
+        for (j = 0; j < EVOS_PER_MON; j++)
+        {
+            if (gEvolutionTable[i][j].method != 0 && gEvolutionTable[i][j].targetSpecies == species)
+            {
+                *minLevel = GetMinEvolutionLevel(&gEvolutionTable[i][j]);
+                return i;
+            }
+        }
+    }
+    return SPECIES_NONE;
+}
+
+static u16 FitSpeciesToLevel(u16 species, u8 level, u32 seed)
+{
+    u16 preEvo, options[EVOS_PER_MON];
+    u8 minLevel, count, i;
+
+    // Down: while this stage needs a higher level.
+    for (;;)
+    {
+        preEvo = GetPreEvolution(species, &minLevel);
+        if (preEvo == SPECIES_NONE || IsBabySpecies(preEvo) || level >= minLevel)
+            break;
+        species = preEvo;
+    }
+
+    // Up: while it would have evolved by now (picking one if it can evolve into several).
+    for (;;)
+    {
+        count = 0;
+        for (i = 0; i < EVOS_PER_MON; i++)
+        {
+            const struct Evolution *evo = &gEvolutionTable[species][i];
+
+            if (evo->method == 0 || evo->method == EVO_LEVEL_SHEDINJA)
+                continue;
+            minLevel = GetMinEvolutionLevel(evo);
+            if (!IsLevelEvolution(evo->method))
+                minLevel += EVO_UP_EXTRA_LEVELS;
+            if (level >= minLevel)
+                options[count++] = evo->targetSpecies;
+        }
+        if (count == 0)
+            break;
+        species = options[seed % count];
+        seed = HashU32(seed);
+    }
+    return species;
+}
+
 static bool8 IsSpeciesUsed(u16 species, const u16 *used, u8 count)
 {
     u8 i;
@@ -409,8 +545,9 @@ static bool8 IsSpeciesUsed(u16 species, const u16 *used, u8 count)
 
 // Finds the next species for the partner: first from the partner's own team,
 // then from other trainers of the partner's class, then from any trainer. Never a
-// species already in this battle.
-static u16 PickMirrorSpecies(u16 trainerB, u16 trainerA, u32 seed, const u16 *used, u8 usedCount, u16 *heldItem)
+// species already in this battle. Each one is moved to the evolution stage that
+// fits the level.
+static u16 PickMirrorSpecies(u16 trainerB, u32 seed, u8 level, const u16 *used, u8 usedCount, u16 *heldItem)
 {
     u16 pass, n, t, i, start, species;
 
@@ -430,7 +567,10 @@ static u16 PickMirrorSpecies(u16 trainerB, u16 trainerA, u32 seed, const u16 *us
             {
                 u8 slot = (i + seed) % gTrainers[t].partySize;
                 species = GetTrainerPartyMonSpecies(t, slot, heldItem);
-                if (species == SPECIES_NONE || species == SPECIES_EGG || IsSpeciesUsed(species, used, usedCount))
+                if (species == SPECIES_NONE || species == SPECIES_EGG)
+                    continue;
+                species = FitSpeciesToLevel(species, level, seed);
+                if (IsSpeciesUsed(species, used, usedCount))
                     continue;
                 if (pass != 0)
                     *heldItem = ITEM_NONE; // Only the partner's own Pokémon keep their items
@@ -495,7 +635,7 @@ static void AddMirrorOpponent(void)
         struct Pokemon *mon = &gEnemyParty[COOP_TEAM_SIZE + i];
         u32 seed = HashU32(trainerA * 8 + i);
         u16 heldItem;
-        u16 species = PickMirrorSpecies(trainerB, trainerA, seed, used, keptCount + i, &heldItem);
+        u16 species = PickMirrorSpecies(trainerB, seed, levels[i], used, keptCount + i, &heldItem);
         u8 fixedIV = GetMonData(&gEnemyParty[i], MON_DATA_HP_IV, NULL);
 
         used[keptCount + i] = species;

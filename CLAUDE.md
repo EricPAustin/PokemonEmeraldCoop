@@ -27,7 +27,7 @@ For how the co-op works in detail (controls, saving, error messages, testing don
 - **Phase 0 – Setup:** private GitHub repo ✅, clean build running in mGBA, this file in place ✅.
 - **Phase 1 – Two players exist:** ✅ P2 character, P2 starter, split teams, shared save, NEW GAME/CONTINUE in co-op, P2 can use doors/warps. P2 picks their own gender and name in Birch's intro and can nickname their starter in Birch's lab.
 - **Phase 2 – Co-op battles:** ✅ multi battles, each player picks their own Pokémon's moves ("NAME: What will..."). P2's trainer back sprite slides in and throws P2's Pokémon. To do: wild double battles, edge cases below.
-- **Phase 3 – Doubled trainers:** ✅ generated "mirrored partner" for every trainer (same class, different species, same levels, ≤3 Pokémon per side). To do: hand-tune notable fights (gyms, Elite Four, Champion).
+- **Phase 3 – Doubled trainers:** ✅ generated "mirrored partner" for every trainer (same class, different species, same levels, evolution stage fitted to the level, ≤3 Pokémon per side). To do: hand-tune notable fights (gyms, Elite Four, Champion).
 - **Phase 4 – Content:** casino (can reuse Mauville Game Corner code), new/changed maps, story additions.
 
 ## Known limitations (from the notes)
